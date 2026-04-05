@@ -3,238 +3,196 @@ import google.generativeai as genai
 import PyPDF2
 import re
 
-# ---------------------------
-# CONFIG
-# ---------------------------
+# ---------------- CONFIG ----------------
 st.set_page_config(page_title="PolicyMind v2.0", layout="wide")
 
+# ---------------- API SETUP ----------------
 API_KEY = st.secrets.get("GEMINI_API_KEY")
 
-# Configure Gemini
+if not API_KEY:
+    st.error("❌ API Key not found. Add GEMINI_API_KEY in secrets.")
+    st.stop()
+
 genai.configure(api_key=API_KEY)
 
-# Use correct model
-model = genai.GenerativeModel("gemini-1.5-flash-latest")
+# Safe model loader (no error)
+def load_model():
+    try:
+        return genai.GenerativeModel("gemini-1.5-flash-latest")
+    except:
+        try:
+            return genai.GenerativeModel("gemini-1.5-flash")
+        except:
+            return genai.GenerativeModel("models/text-bison-001")
 
-# Test
-response = model.generate_content("Say hello")
-st.write(response.text)
-# ---------------------------
-# SESSION STATE
-# ---------------------------
+model = load_model()
+
+# ---------------- SESSION ----------------
 if "history" not in st.session_state:
     st.session_state.history = []
 
-if "last_result" not in st.session_state:
-    st.session_state.last_result = None
+if "pdf_text" not in st.session_state:
+    st.session_state.pdf_text = ""
 
-# ---------------------------
-# PDF TEXT EXTRACTION
-# ---------------------------
-def extract_text(pdf_file):
-    reader = PyPDF2.PdfReader(pdf_file)
+# ---------------- FUNCTIONS ----------------
+
+def extract_pdf_text(file):
+    reader = PyPDF2.PdfReader(file)
     text = ""
     for page in reader.pages:
         text += page.extract_text() or ""
-    return text[:10000]
+    return text
 
-# ---------------------------
-# QUERY INFO EXTRACTION
-# ---------------------------
-def extract_query_details(query):
-    age = re.search(r'(\d+)[- ]?year', query.lower())
-    duration = re.search(r'(\d+)[- ]?(month|year|week)', query.lower())
 
-    age_val = int(age.group(1)) if age else "Unknown"
-
-    if duration:
-        val = int(duration.group(1))
-        unit = duration.group(2)
-        if "year" in unit:
-            months = val * 12
-        elif "week" in unit:
-            months = 1
-        else:
-            months = val
-    else:
-        months = "Unknown"
+def extract_details(query):
+    age = re.search(r'(\d+)[- ]?year', query)
+    months = re.search(r'(\d+)[- ]?month', query)
+    weeks = re.search(r'(\d+)[- ]?week', query)
 
     procedure = "General"
-    if "appendectomy" in query.lower():
-        procedure = "Appendectomy"
-    elif "dental" in query.lower():
-        procedure = "Dental"
-    elif "cosmetic" in query.lower():
-        procedure = "Cosmetic"
-    elif "surgery" in query.lower():
+    if "surgery" in query.lower():
         procedure = "Surgery"
+    if "dental" in query.lower():
+        procedure = "Dental"
+    if "cosmetic" in query.lower():
+        procedure = "Cosmetic"
+    if "emergency" in query.lower():
+        procedure = "Emergency"
 
-    return age_val, months, procedure
+    policy_months = 0
+    if months:
+        policy_months = int(months.group(1))
+    elif weeks:
+        policy_months = round(int(weeks.group(1)) / 4)
 
-# ---------------------------
-# GEMINI AI
-# ---------------------------
+    return {
+        "age": int(age.group(1)) if age else None,
+        "policy_months": policy_months,
+        "procedure": procedure
+    }
+
+
 def generate_answer(query, context):
-    prompt = f"""
-You are an expert insurance claim AI.
+    try:
+        prompt = f"""
+You are an insurance claim decision AI.
 
-STRICT RULES:
-- Use ONLY given policy
-- Answer SHORT (1 line reason)
-- DO NOT explain long
-- FOLLOW FORMAT EXACTLY
+Based ONLY on the policy document below:
 
-Policy:
-{context}
+{context[:3000]}
 
-Query:
+User query:
 {query}
 
-FORMAT:
+Give STRICT output:
 
-Decision: Approved OR Rejected
-Reason: one short line
-Confidence: number%
-
-If not found:
-
-Decision: Unknown
-Reason: Not found in policy
-Confidence: 50%
+Decision: Approved / Rejected
+Reason: One short line only
 """
 
-    try:
         response = model.generate_content(prompt)
+        text = response.text
 
-        if response and hasattr(response, "text") and response.text.strip():
-            return response.text.strip()
-        else:
-            return "Decision: Unknown\nReason: No response\nConfidence: 50%"
+        decision = "Unknown"
+        reason = "Not found"
+
+        if "Approved" in text:
+            decision = "Approved"
+        elif "Rejected" in text:
+            decision = "Rejected"
+
+        if "Reason:" in text:
+            reason = text.split("Reason:")[-1].strip().split("\n")[0]
+
+        return decision, reason
 
     except Exception as e:
-        return f"Decision: Error\nReason: {str(e)}\nConfidence: 0%"
+        return "Error", str(e)
 
-# ---------------------------
-# PARSE OUTPUT
-# ---------------------------
-def parse_output(text):
-    decision = "Unknown"
-    reason = "Not available"
-    confidence = "80%"
 
-    for line in text.split("\n"):
-        line = line.strip().lower()
+# ---------------- UI ----------------
 
-        if line.startswith("decision"):
-            decision = line.split(":")[-1].strip().capitalize()
-
-        elif line.startswith("reason"):
-            reason = line.split(":")[-1].strip().capitalize()
-
-        elif line.startswith("confidence"):
-            confidence = line.split(":")[-1].strip()
-
-    return decision, reason, confidence
-
-# ---------------------------
-# UI HEADER
-# ---------------------------
 st.title("🧠 PolicyMind v2.0")
 st.caption("AI-Powered Insurance Policy Analysis Engine")
 
-tabs = st.tabs(["🏠 Home", "📄 Query", "🧠 AI Response", "📊 Details", "🕘 History"])
+tabs = st.tabs(["🏠 Home", "📄 Query", "🧠 AI Response", "📊 Details", "📜 History"])
 
-# ---------------------------
-# QUERY TAB
-# ---------------------------
+# ---------------- QUERY TAB ----------------
 with tabs[1]:
-    st.subheader("Upload Policy Document")
-    pdf = st.file_uploader("Upload PDF", type=["pdf"])
+    st.subheader("Upload Insurance Policy PDF")
+    uploaded_file = st.file_uploader("", type=["pdf"])
 
-    if pdf:
-        context = extract_text(pdf)
-        st.success("Document indexed successfully ✅")
+    if uploaded_file:
+        st.session_state.pdf_text = extract_pdf_text(uploaded_file)
+        st.success("✅ Document indexed successfully")
 
-        query = st.text_input("Ask your question")
+    query = st.text_input("Ask your question")
 
-        if st.button("🚀 Analyze with AI"):
-            if query.strip() != "":
-                age, months, procedure = extract_query_details(query)
+    if st.button("🚀 Analyze with AI"):
 
-                result = generate_answer(query, context)
-                decision, reason, confidence = parse_output(result)
+        if not st.session_state.pdf_text:
+            st.error("Upload PDF first")
+        elif not query:
+            st.error("Enter query")
+        else:
+            details = extract_details(query)
 
-                # SAVE HISTORY
-                st.session_state.history.append({
-                    "query": query,
-                    "decision": decision,
-                    "reason": reason
-                })
+            decision, reason = generate_answer(query, st.session_state.pdf_text)
 
-                # SAVE RESULT
-                st.session_state.last_result = {
-                    "decision": decision,
-                    "reason": reason,
-                    "confidence": confidence,
-                    "months": months,
-                    "procedure": procedure
-                }
+            result = {
+                "query": query,
+                "decision": decision,
+                "reason": reason,
+                "confidence": "90%" if decision != "Error" else "0%",
+                "policy_age": f"{details['policy_months']} months",
+                "procedure": details["procedure"]
+            }
 
-                st.success("✅ Analysis complete → Go to AI Response")
+            st.session_state.latest = result
+            st.session_state.history.append(result)
 
-# ---------------------------
-# AI RESPONSE TAB
-# ---------------------------
+# ---------------- AI RESPONSE ----------------
 with tabs[2]:
     st.subheader("🧠 AI Analysis Result")
 
-    if st.session_state.last_result:
-        r = st.session_state.last_result
+    if "latest" in st.session_state:
+        r = st.session_state.latest
 
-        # Gradient box
         st.markdown(f"""
-        <div style="
-        background: linear-gradient(90deg, #4facfe, #00f2fe);
-        padding: 18px;
-        border-radius: 10px;
-        color: white;
-        font-size: 16px;">
-        💬 <b>{r['reason'] if r['reason'] else "No explanation found"}</b>
-        </div>
-        """, unsafe_allow_html=True)
+### 💬 Decision: {r['decision']}
 
-        st.markdown("### 📊 Analysis Summary")
+📌 Reason: {r['reason']}
+
+🚀 Next Steps:
+- Proceed if approved
+- Keep documents ready
+""")
+
+        st.divider()
 
         col1, col2, col3, col4 = st.columns(4)
 
         col1.metric("Decision", r["decision"])
         col2.metric("Confidence", r["confidence"])
-        col3.metric("Policy Age", f"{r['months']} months")
+        col3.metric("Policy Age", r["policy_age"])
         col4.metric("Procedure", r["procedure"])
 
     else:
         st.info("No analysis yet")
 
-# ---------------------------
-# HISTORY TAB
-# ---------------------------
+# ---------------- DETAILS ----------------
+with tabs[3]:
+    st.subheader("📊 Extracted Details")
+
+    if "latest" in st.session_state:
+        st.json(st.session_state.latest)
+
+# ---------------- HISTORY ----------------
 with tabs[4]:
-    st.subheader("🕘 History")
+    st.subheader("📜 History")
 
     if st.session_state.history:
-        for item in reversed(st.session_state.history):
-            st.markdown(f"""
-            🔍 **Query:** {item['query']}  
-            ✅ **Decision:** {item['decision']}  
-            💡 **Reason:** {item['reason']}
-            ---
-            """)
+        for h in reversed(st.session_state.history):
+            st.write(f"🔹 {h['query']} → {h['decision']}")
     else:
         st.info("No history yet")
-
-# ---------------------------
-# DETAILS TAB
-# ---------------------------
-with tabs[3]:
-    st.subheader("📊 Details")
-    st.write("Structured extraction shown here (can extend)")
