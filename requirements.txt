@@ -2,5 +2,5 @@ streamlit
 PyPDF2
 sentence-transformers
 faiss-cpu
-transformers
-torch
+google-generativeai
+numpy
