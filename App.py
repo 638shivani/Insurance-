@@ -4,37 +4,35 @@ import PyPDF2
 import re
 
 # ---------------- CONFIG ----------------
-st.set_page_config(page_title="PolicyMind v2.0", layout="wide")
+st.set_page_config(page_title="PolicyMind v2.0", layout="wide", page_icon="🧠")
 
 # ---------------- API KEY ----------------
 API_KEY = st.secrets.get("GEMINI_API_KEY")
-
 if not API_KEY:
-    st.error("❌ Add GEMINI_API_KEY in Streamlit Secrets")
+    st.error("❌ GEMINI_API_KEY missing in Secrets!")
     st.stop()
 
 genai.configure(api_key=API_KEY)
 
 # ---------------- ROBUST MODEL LOADER ----------------
 @st.cache_resource
-def load_model():
+def load_working_model():
     """ 
-    This function tries multiple names to find a working model 
-    on your specific API version.
+    Tries to load Flash, then Pro. 
+    If both fail, it scans your API key for ANY available model.
     """
-    # List of models to try in order of preference
-    model_names = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+    preferred_models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
     
-    for name in model_names:
+    for model_id in preferred_models:
         try:
-            m = genai.GenerativeModel(name)
-            # Test a tiny generation to see if it actually works (404 check)
-            m.generate_content("test", generation_config={"max_output_tokens": 1})
+            m = genai.GenerativeModel(model_id)
+            # Test if the model actually exists with a tiny call
+            m.generate_content("ping", generation_config={"max_output_tokens": 1})
             return m
         except Exception:
             continue
             
-    # Final attempt: List all models and pick the first one that supports text
+    # Final Fallback: List all models and pick the first 'generateContent' one
     try:
         for m in genai.list_models():
             if "generateContent" in m.supported_generation_methods:
@@ -42,97 +40,85 @@ def load_model():
     except:
         return None
 
-model = load_model()
+model = load_working_model()
 
-# ---------------- PDF EXTRACTION ----------------
+# ---------------- PDF LOGIC ----------------
 def extract_pdf_text(file):
     try:
         reader = PyPDF2.PdfReader(file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() or ""
-        return text
+        return "\n".join([page.extract_text() or "" for page in reader.pages])
     except Exception as e:
-        return f"Error reading PDF: {e}"
+        return ""
 
-# ---------------- UI HELPERS ----------------
-def get_details(query):
-    # Basic regex for months/years
-    months = re.search(r'(\d+)\s*month', query, re.I)
-    years = re.search(r'(\d+)\s*year', query, re.I)
-    
-    total_months = 0
-    if months: total_months = int(months.group(1))
-    if years: total_months = int(years.group(1)) * 12
-    
-    proc = "General"
-    if "dental" in query.lower(): proc = "Dental"
-    elif "surgery" in query.lower(): proc = "Surgery"
-    
-    return total_months, proc
+# ---------------- SESSION ----------------
+if "history" not in st.session_state: st.session_state.history = []
+if "latest" not in st.session_state: st.session_state.latest = None
+if "pdf_text" not in st.session_state: st.session_state.pdf_text = ""
 
-# ---------------- MAIN APP ----------------
+# ---------------- UI ----------------
 st.title("🧠 PolicyMind v2.0")
+st.caption("Auto-Detecting AI Insurance Engine")
 
 if not model:
-    st.error("❌ Could not connect to any Gemini models. Please check your API Key permissions.")
+    st.error("❌ No compatible Gemini models found. Check your API Key permissions.")
     st.stop()
 
 tabs = st.tabs(["📄 Query", "🧠 AI Response", "📜 History"])
 
 with tabs[0]:
-    uploaded_file = st.file_uploader("Upload Policy PDF", type="pdf")
-    query = st.text_input("Enter claim details (e.g. 'I've had my policy for 2 years, I need dental surgery')")
-    
-    if st.button("🚀 Analyze"):
-        if uploaded_file and query:
-            with st.spinner("Analyzing..."):
-                text = extract_pdf_text(uploaded_file)
-                
-                prompt = f"Based on this policy: {text[:10000]}\n\nUser Question: {query}\n\nDecision: [Approved/Rejected]\nReason: [Short line]"
-                
+    uploaded = st.file_uploader("Upload Policy PDF", type="pdf")
+    if uploaded:
+        st.session_state.pdf_text = extract_pdf_text(uploaded)
+        st.success("✅ Policy Loaded")
+
+    query = st.text_input("Describe your claim:")
+
+    if st.button("🚀 Run Analysis"):
+        if not st.session_state.pdf_text or not query:
+            st.error("Upload PDF and enter a query first!")
+        else:
+            with st.spinner("AI is evaluating..."):
                 try:
+                    prompt = f"Policy: {st.session_state.pdf_text[:12000]}\n\nClaim: {query}\n\nDecision: [Approved/Rejected]\nReason: [Short line]"
                     response = model.generate_content(prompt)
                     ans = response.text
                     
-                    # Logic to parse decision
-                    dec = "Approved" if "Approved" in ans else "Rejected"
-                    reason = ans.split("Reason:")[-1] if "Reason:" in ans else ans
+                    decision = "Approved" if "Approved" in ans else "Rejected"
+                    reason = ans.split("Reason:")[-1].strip() if "Reason:" in ans else ans
                     
-                    months, proc = get_details(query)
-                    
+                    # Logic for metadata
+                    proc = "Surgery" if "surgery" in query.lower() else "General"
+                    age_match = re.search(r'(\d+)\s*month', query, re.I)
+                    age = f"{age_match.group(1)} months" if age_match else "Unknown"
+
                     res = {
-                        "decision": dec,
-                        "reason": reason.strip(),
-                        "months": months,
-                        "proc": proc,
-                        "query": query
+                        "query": query, "decision": decision, "reason": reason,
+                        "confidence": "95%", "policy_age": age, "procedure": proc
                     }
                     st.session_state.latest = res
-                    if "history" not in st.session_state: st.session_state.history = []
                     st.session_state.history.append(res)
-                    st.success("Analysis Complete! Switch to 'AI Response' tab.")
                 except Exception as e:
-                    st.error(f"AI Error: {e}")
-        else:
-            st.warning("Please upload a PDF and enter a query.")
+                    st.error(f"Analysis failed: {e}")
 
 with tabs[1]:
-    if "latest" in st.session_state:
+    if st.session_state.latest:
         r = st.session_state.latest
-        color = "green" if r["decision"] == "Approved" else "red"
+        color = "#2ecc71" if r["decision"] == "Approved" else "#e74c3c"
         
-        st.markdown(f"<h2 style='color:{color}'>{r['decision']}</h2>", unsafe_allow_allow_html=True)
-        st.write(f"**Reason:** {r['reason']}")
+        st.markdown(f"""
+        <div style="background:{color}; padding:20px; border-radius:10px; color:white;">
+            <h2 style="color:white; margin:0;">{r['decision']}</h2>
+            <p style="margin-top:10px;">{r['reason']}</p>
+        </div>
+        """, unsafe_allow_html=True)
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Policy Age", f"{r['months']} months")
-        c2.metric("Procedure", r["proc"])
-        c3.metric("Confidence", "95%")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Status", r["decision"])
+        col2.metric("Age", r["policy_age"])
+        col3.metric("Procedure", r["procedure"])
     else:
-        st.info("No result yet.")
+        st.info("Results will appear here.")
 
 with tabs[2]:
-    if "history" in st.session_state:
-        for item in reversed(st.session_state.history):
-            st.write(f"🔹 {item['query']} -> **{item['decision']}**")
+    for item in reversed(st.session_state.history):
+        st.write(f"🔹 **{item['query']}** → {item['decision']}")
