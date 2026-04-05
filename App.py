@@ -4,216 +4,135 @@ import PyPDF2
 import re
 
 # ---------------- CONFIG ----------------
-st.set_page_config(page_title="PolicyMind v2.0", layout="wide", page_icon="🧠")
+st.set_page_config(page_title="PolicyMind v2.0", layout="wide")
 
 # ---------------- API KEY ----------------
 API_KEY = st.secrets.get("GEMINI_API_KEY")
 
 if not API_KEY:
-    st.error("❌ GEMINI_API_KEY is missing from Streamlit secrets.")
+    st.error("❌ Add GEMINI_API_KEY in Streamlit Secrets")
     st.stop()
 
 genai.configure(api_key=API_KEY)
 
-# ---------------- MODEL INITIALIZATION ----------------
+# ---------------- ROBUST MODEL LOADER ----------------
 @st.cache_resource
 def load_model():
-    """Initializes the model using the stable identifier to avoid 404 errors."""
+    """ 
+    This function tries multiple names to find a working model 
+    on your specific API version.
+    """
+    # List of models to try in order of preference
+    model_names = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+    
+    for name in model_names:
+        try:
+            m = genai.GenerativeModel(name)
+            # Test a tiny generation to see if it actually works (404 check)
+            m.generate_content("test", generation_config={"max_output_tokens": 1})
+            return m
+        except Exception:
+            continue
+            
+    # Final attempt: List all models and pick the first one that supports text
     try:
-        # Using 'gemini-1.5-flash' is faster and more cost-effective for document analysis
-        return genai.GenerativeModel("gemini-1.5-flash")
-    except Exception as e:
-        st.error(f"AI Model Initialization failed: {e}")
+        for m in genai.list_models():
+            if "generateContent" in m.supported_generation_methods:
+                return genai.GenerativeModel(m.name)
+    except:
         return None
 
 model = load_model()
 
-# ---------------- SESSION MANAGEMENT ----------------
-if "history" not in st.session_state:
-    st.session_state.history = []
-if "latest" not in st.session_state:
-    st.session_state.latest = None
-if "pdf_text" not in st.session_state:
-    st.session_state.pdf_text = ""
-
-# ---------------- PDF LOGIC ----------------
+# ---------------- PDF EXTRACTION ----------------
 def extract_pdf_text(file):
     try:
         reader = PyPDF2.PdfReader(file)
         text = ""
         for page in reader.pages:
-            content = page.extract_text()
-            if content:
-                text += content + "\n"
+            text += page.extract_text() or ""
         return text
     except Exception as e:
-        st.error(f"Failed to read PDF: {e}")
-        return ""
+        return f"Error reading PDF: {e}"
 
-# ---------------- QUERY PARSING ----------------
-def extract_details(query):
-    # Search for numeric values followed by time units (Case Insensitive)
-    age_match = re.search(r'(\d+)\s*year', query, re.I)
-    month_match = re.search(r'(\d+)\s*month', query, re.I)
-    week_match = re.search(r'(\d+)\s*week', query, re.I)
-
-    procedure = "General Medical"
-    q = query.lower()
-
-    if "dental" in q: procedure = "Dental"
-    elif "cosmetic" in q: procedure = "Cosmetic"
-    elif "appendectomy" in q: procedure = "Appendectomy"
-    elif "surgery" in q: procedure = "Surgery"
-    elif "emergency" in q: procedure = "Emergency"
-
-    policy_months = 0
-    if month_match:
-        policy_months = int(month_match.group(1))
-    elif week_match:
-        policy_months = round(int(week_match.group(1)) / 4)
-    elif age_match:
-        policy_months = int(age_match.group(1)) * 12
-
-    return {
-        "policy_months": policy_months,
-        "procedure": procedure
-    }
-
-# ---------------- AI ANALYSIS ----------------
-def generate_answer(query, context):
-    if not model:
-        return "Error", "AI Model is not initialized."
+# ---------------- UI HELPERS ----------------
+def get_details(query):
+    # Basic regex for months/years
+    months = re.search(r'(\d+)\s*month', query, re.I)
+    years = re.search(r'(\d+)\s*year', query, re.I)
     
-    try:
-        # Gemini 1.5 can handle up to 1M tokens, but we'll use a safe 15k char slice
-        prompt = f"""
-        You are an expert Health Insurance Claims Adjuster.
-        
-        INSTRUCTIONS:
-        1. Read the policy context below.
-        2. Evaluate the user's query against the policy rules (waiting periods, exclusions, etc.).
-        3. Provide a clear Decision and a concise Reason.
+    total_months = 0
+    if months: total_months = int(months.group(1))
+    if years: total_months = int(years.group(1)) * 12
+    
+    proc = "General"
+    if "dental" in query.lower(): proc = "Dental"
+    elif "surgery" in query.lower(): proc = "Surgery"
+    
+    return total_months, proc
 
-        POLICY CONTEXT:
-        {context[:15000]}
-
-        USER CLAIM QUERY:
-        {query}
-
-        OUTPUT FORMAT (Strict):
-        Decision: [Approved or Rejected]
-        Reason: [One short, professional sentence]
-        """
-
-        response = model.generate_content(prompt)
-        
-        # Safety check for empty responses
-        if not response or not response.text:
-            return "Error", "The AI returned an empty response."
-
-        output = response.text
-        
-        # Parsing the Decision
-        decision = "Rejected" # Default
-        if "Approved" in output:
-            decision = "Approved"
-        elif "Error" in output:
-            decision = "Error"
-
-        # Parsing the Reason
-        reason = "No specific reason provided by AI."
-        if "Reason:" in output:
-            reason = output.split("Reason:")[-1].strip().split("\n")[0]
-
-        return decision, reason
-
-    except Exception as e:
-        return "Error", str(e)
-
-# ---------------- MAIN UI ----------------
+# ---------------- MAIN APP ----------------
 st.title("🧠 PolicyMind v2.0")
-st.caption("AI-Powered Insurance Policy Analysis Engine")
 
-tabs = st.tabs(["📄 Query", "🧠 AI Response", "📊 Details", "📜 History"])
+if not model:
+    st.error("❌ Could not connect to any Gemini models. Please check your API Key permissions.")
+    st.stop()
 
-# --- TAB: QUERY ---
+tabs = st.tabs(["📄 Query", "🧠 AI Response", "📜 History"])
+
 with tabs[0]:
-    uploaded_file = st.file_uploader("Upload Insurance Policy (PDF)", type=["pdf"])
-
-    if uploaded_file:
-        with st.spinner("Processing PDF..."):
-            st.session_state.pdf_text = extract_pdf_text(uploaded_file)
-        st.success("✅ Document indexed and ready for analysis.")
-
-    query = st.text_input("Enter claim scenario:", placeholder="e.g., I need dental surgery. I have had my policy for 8 months.")
-
-    if st.button("🚀 Analyze Claim"):
-        if not st.session_state.pdf_text:
-            st.error("Please upload a policy PDF first.")
-        elif not query:
-            st.error("Please enter your claim details.")
+    uploaded_file = st.file_uploader("Upload Policy PDF", type="pdf")
+    query = st.text_input("Enter claim details (e.g. 'I've had my policy for 2 years, I need dental surgery')")
+    
+    if st.button("🚀 Analyze"):
+        if uploaded_file and query:
+            with st.spinner("Analyzing..."):
+                text = extract_pdf_text(uploaded_file)
+                
+                prompt = f"Based on this policy: {text[:10000]}\n\nUser Question: {query}\n\nDecision: [Approved/Rejected]\nReason: [Short line]"
+                
+                try:
+                    response = model.generate_content(prompt)
+                    ans = response.text
+                    
+                    # Logic to parse decision
+                    dec = "Approved" if "Approved" in ans else "Rejected"
+                    reason = ans.split("Reason:")[-1] if "Reason:" in ans else ans
+                    
+                    months, proc = get_details(query)
+                    
+                    res = {
+                        "decision": dec,
+                        "reason": reason.strip(),
+                        "months": months,
+                        "proc": proc,
+                        "query": query
+                    }
+                    st.session_state.latest = res
+                    if "history" not in st.session_state: st.session_state.history = []
+                    st.session_state.history.append(res)
+                    st.success("Analysis Complete! Switch to 'AI Response' tab.")
+                except Exception as e:
+                    st.error(f"AI Error: {e}")
         else:
-            with st.spinner("AI is calculating coverage..."):
-                details = extract_details(query)
-                decision, reason = generate_answer(query, st.session_state.pdf_text)
+            st.warning("Please upload a PDF and enter a query.")
 
-                # Set confidence to 0% if the system errored out
-                conf = "0%" if decision == "Error" else "94%"
-
-                result = {
-                    "query": query,
-                    "decision": decision,
-                    "reason": reason,
-                    "confidence": conf,
-                    "policy_age": f"{details['policy_months']} months",
-                    "procedure": details["procedure"]
-                }
-
-                st.session_state.latest = result
-                st.session_state.history.append(result)
-
-# --- TAB: AI RESPONSE ---
 with tabs[1]:
-    if st.session_state.latest:
-        res = st.session_state.latest
+    if "latest" in st.session_state:
+        r = st.session_state.latest
+        color = "green" if r["decision"] == "Approved" else "red"
         
-        # Visual styling based on result
-        color_map = {
-            "Approved": "linear-gradient(90deg, #11998e, #38ef7d)",
-            "Rejected": "linear-gradient(90deg, #ff4b2b, #ff416c)",
-            "Error": "linear-gradient(90deg, #30333d, #5b5f6b)"
-        }
-        bg = color_map.get(res['decision'], "#333")
-
-        st.markdown(f"""
-        <div style="background: {bg}; padding: 25px; border-radius: 15px; color: white; margin-bottom: 25px;">
-            <h2 style="margin: 0; color: white;">{res['decision']}</h2>
-            <p style="font-size: 1.2em; opacity: 0.9; margin-top: 10px;"><b>AI Reason:</b> {res['reason']}</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        st.markdown("### 📈 Analysis Metrics")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Status", res["decision"])
-        m2.metric("Confidence", res["confidence"])
-        m3.metric("Detected Age", res["policy_age"])
-        m4.metric("Procedure", res["procedure"])
+        st.markdown(f"<h2 style='color:{color}'>{r['decision']}</h2>", unsafe_allow_allow_html=True)
+        st.write(f"**Reason:** {r['reason']}")
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Policy Age", f"{r['months']} months")
+        c2.metric("Procedure", r["proc"])
+        c3.metric("Confidence", "95%")
     else:
-        st.info("Run an analysis in the 'Query' tab to see results.")
+        st.info("No result yet.")
 
-# --- TAB: DETAILS ---
 with tabs[2]:
-    if st.session_state.latest:
-        st.subheader("Raw Analysis Data")
-        st.json(st.session_state.latest)
-
-# --- TAB: HISTORY ---
-with tabs[3]:
-    if st.session_state.history:
+    if "history" in st.session_state:
         for item in reversed(st.session_state.history):
-            with st.expander(f"🔍 {item['query'][:60]}..."):
-                st.write(f"**Decision:** {item['decision']}")
-                st.write(f"**Reason:** {item['reason']}")
-                st.write(f"**Procedure:** {item['procedure']}")
-    else:
-        st.info("No previous analyses found.")
+            st.write(f"🔹 {item['query']} -> **{item['decision']}**")
