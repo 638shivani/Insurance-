@@ -9,9 +9,16 @@ import re
 st.set_page_config(page_title="PolicyMind v2.0", layout="wide")
 
 API_KEY = st.secrets.get("GEMINI_API_KEY")
-genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel("gemini-1.5-pro")
 
+# Configure Gemini
+genai.configure(api_key=API_KEY)
+
+# Use correct model
+model = genai.GenerativeModel("gemini-1.5-flash-latest")
+
+# Test
+response = model.generate_content("Say hello")
+st.write(response.text)
 # ---------------------------
 # SESSION STATE
 # ---------------------------
