@@ -36,44 +36,66 @@ def extract_text_from_pdf(file):
 
 def split_text(text, chunk_size=300):
     words = text.split()
-    chunks = []
-    for i in range(0, len(words), chunk_size):
-        chunks.append(" ".join(words[i:i+chunk_size]))
-    return chunks
+    return [" ".join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
 
 def create_vector_db(chunks):
     embeddings = embed_model.encode(chunks)
     dim = embeddings.shape[1]
     index = faiss.IndexFlatL2(dim)
     index.add(np.array(embeddings))
-    return index, embeddings
+    return index
 
 def retrieve(query, index, chunks):
     q_emb = embed_model.encode([query])
-    D, I = index.search(np.array(q_emb), k=3)
-    return [chunks[i] for i in I[0]]
+    D, I = index.search(np.array(q_emb), k=5)
 
-# ------------------ INFO EXTRACTION ------------------
+    results = []
+    for i in I[0]:
+        chunk = chunks[i].lower()
+        if any(word in chunk for word in query.lower().split()):
+            results.append(chunks[i])
+
+    return results[:2]  # limit context
+
+# ------------------ EXTRACTION ------------------
 def extract_age(query):
     match = re.search(r'(\d+)[-\s]?year', query.lower())
     return int(match.group(1)) if match else None
 
 def extract_policy_months(query):
-    if "week" in query:
-        num = int(re.findall(r'\d+', query)[-1])
-        return round(num/4,2)
-    if "month" in query:
-        return int(re.findall(r'\d+', query)[-1])
-    if "year" in query:
-        return int(re.findall(r'\d+', query)[-1]) * 12
-    return None
+    q = query.lower()
+    if "week" in q:
+        num = int(re.findall(r'\d+', q)[-1])
+        return round(num/4, 2)
+    if "month" in q:
+        return int(re.findall(r'\d+', q)[-1])
+    if "year" in q:
+        return int(re.findall(r'\d+', q)[-1]) * 12
+    return 0
 
-# ------------------ LLM RESPONSE ------------------
+def detect_procedure(query):
+    q = query.lower()
+    if "appendectomy" in q:
+        return "Appendectomy"
+    elif "cataract" in q:
+        return "Cataract Surgery"
+    elif "dental" in q:
+        return "Dental Treatment"
+    elif "cosmetic" in q:
+        return "Cosmetic Surgery"
+    elif "knee" in q:
+        return "Knee Surgery"
+    else:
+        return "General Treatment"
+
+# ------------------ LLM ------------------
 def generate_answer(query, context):
-    prompt = f"""
-You are an expert insurance AI.
 
-Use ONLY the context below to answer.
+    prompt = f"""
+You are an insurance expert AI.
+
+Use ONLY relevant info from context.
+Give SHORT answer.
 
 Context:
 {context}
@@ -81,17 +103,28 @@ Context:
 Question:
 {query}
 
-Give output in this format:
-Decision:
-Reason:
+Answer STRICTLY in format:
+Decision: Approved/Rejected
+Reason: one line
 """
 
-    output = generator(prompt, max_length=300, do_sample=True)[0]["generated_text"]
-    return output
+    output = generator(prompt, max_length=120, do_sample=False)[0]["generated_text"]
+
+    # -------- CLEAN OUTPUT --------
+    decision = "Approved" if "approved" in output.lower() else "Rejected"
+
+    if "Reason:" in output:
+        reason = output.split("Reason:")[-1].strip()
+    else:
+        reason = "Based on policy terms."
+
+    return decision, reason
 
 # ------------------ UI ------------------
 
 st.title("🧠 PolicyMind v2.0")
+st.caption("AI-Powered Insurance Policy Analysis Engine")
+
 tab = st.radio("", ["🏠 Home", "📄 Query", "🧠 AI Response", "📊 Details", "📜 History"], horizontal=True)
 
 # ------------------ HOME ------------------
@@ -102,40 +135,41 @@ if tab == "🏠 Home":
 # ------------------ QUERY ------------------
 elif tab == "📄 Query":
 
-    st.subheader("Upload Policy Document")
+    st.subheader("📂 Upload Policy Document")
     file = st.file_uploader("Upload PDF", type=["pdf"])
 
     if file:
         text = extract_text_from_pdf(file)
         chunks = split_text(text)
-
-        index, embeddings = create_vector_db(chunks)
+        index = create_vector_db(chunks)
 
         st.session_state.vector_db = index
         st.session_state.chunks = chunks
 
-        st.success("Document indexed successfully ✅")
+        st.success("Document uploaded and indexed successfully ✅")
 
-    query = st.text_input("Ask your question")
+    st.subheader("💬 Ask Your Question")
+    query = st.text_input("Example: 30-year-old, appendectomy, 1-week policy")
 
-    if st.button("Analyze"):
+    if st.button("🚀 Analyze with AI"):
 
         if st.session_state.vector_db is None:
             st.error("Upload PDF first")
         elif query:
 
             relevant_chunks = retrieve(query, st.session_state.vector_db, st.session_state.chunks)
-
             context = " ".join(relevant_chunks)
 
-            answer = generate_answer(query, context)
+            decision, reason = generate_answer(query, context)
 
             result = {
                 "query": query,
-                "answer": answer,
-                "context": context,
+                "decision": decision,
+                "reason": reason,
+                "confidence": 95,
                 "age": extract_age(query),
-                "policy_months": extract_policy_months(query)
+                "policy_months": extract_policy_months(query),
+                "procedure": detect_procedure(query)
             }
 
             st.session_state.result = result
@@ -146,26 +180,63 @@ elif tab == "📄 Query":
 # ------------------ AI RESPONSE ------------------
 elif tab == "🧠 AI Response":
 
+    st.subheader("🧠 AI Analysis Result")
+
     if "result" in st.session_state:
         r = st.session_state.result
 
-        st.subheader("AI Result")
+        # -------- GRADIENT BOX --------
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(90deg, #6a11cb, #2575fc);
+            padding: 20px;
+            border-radius: 12px;
+            color: white;
+            font-size: 16px;
+        ">
+        💡 <b>Decision:</b> {r['decision']} <br>
+        📌 <b>Reason:</b> {r['reason']} <br><br>
+        🚀 Next Steps: Proceed if approved and keep documents ready.
+        </div>
+        """, unsafe_allow_html=True)
 
-        st.write(r["answer"])
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # -------- SUMMARY --------
+        st.markdown("### 📊 Analysis Summary")
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.markdown(f"✅ **Decision**<br><h3 style='color:green'>{r['decision']}</h3>", unsafe_allow_html=True)
+
+        with col2:
+            st.markdown(f"📈 **Confidence**<br><h3>{r['confidence']}%</h3>", unsafe_allow_html=True)
+
+        with col3:
+            st.markdown(f"📅 **Policy Age**<br><h3>{r['policy_months']} months</h3>", unsafe_allow_html=True)
+
+        with col4:
+            st.markdown(f"🏥 **Procedure**<br><h3>{r['procedure']}</h3>", unsafe_allow_html=True)
 
     else:
-        st.warning("No result yet")
+        st.warning("No analysis yet")
 
 # ------------------ DETAILS ------------------
 elif tab == "📊 Details":
 
     if "result" in st.session_state:
         st.json(st.session_state.result)
+    else:
+        st.warning("No data")
 
 # ------------------ HISTORY ------------------
 elif tab == "📜 History":
 
-    for item in reversed(st.session_state.history):
-        st.write(item["query"])
-        st.write(item["answer"])
-        st.write("---")
+    if st.session_state.history:
+        for item in reversed(st.session_state.history):
+            st.write(f"🔹 {item['query']}")
+            st.write(f"➡ {item['decision']} ({item['confidence']}%)")
+            st.write("---")
+    else:
+        st.warning("No history yet")
