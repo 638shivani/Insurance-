@@ -1,201 +1,171 @@
 import streamlit as st
+import PyPDF2
+import faiss
+import numpy as np
+from sentence_transformers import SentenceTransformer
+from transformers import pipeline
 import re
 
-# ------------------ PAGE CONFIG ------------------
+# ------------------ CONFIG ------------------
 st.set_page_config(page_title="PolicyMind v2.0", layout="wide")
 
 # ------------------ SESSION ------------------
 if "history" not in st.session_state:
     st.session_state.history = []
+if "vector_db" not in st.session_state:
+    st.session_state.vector_db = None
+if "chunks" not in st.session_state:
+    st.session_state.chunks = []
 
-# ------------------ HEADER ------------------
-st.title("🧠 PolicyMind v2.0")
-st.caption("AI-Powered Insurance Policy Analysis Engine")
+# ------------------ LOAD MODELS ------------------
+@st.cache_resource
+def load_models():
+    embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+    generator = pipeline("text-generation", model="distilgpt2")
+    return embed_model, generator
 
-# ------------------ NAVIGATION ------------------
-tab = st.radio("", ["🏠 Home", "📄 Query", "🧠 AI Response", "📊 Details", "📜 History"], horizontal=True)
+embed_model, generator = load_models()
 
-# ------------------ FUNCTIONS ------------------
+# ------------------ PDF PROCESS ------------------
+def extract_text_from_pdf(file):
+    pdf = PyPDF2.PdfReader(file)
+    text = ""
+    for page in pdf.pages:
+        text += page.extract_text() + "\n"
+    return text
 
+def split_text(text, chunk_size=300):
+    words = text.split()
+    chunks = []
+    for i in range(0, len(words), chunk_size):
+        chunks.append(" ".join(words[i:i+chunk_size]))
+    return chunks
+
+def create_vector_db(chunks):
+    embeddings = embed_model.encode(chunks)
+    dim = embeddings.shape[1]
+    index = faiss.IndexFlatL2(dim)
+    index.add(np.array(embeddings))
+    return index, embeddings
+
+def retrieve(query, index, chunks):
+    q_emb = embed_model.encode([query])
+    D, I = index.search(np.array(q_emb), k=3)
+    return [chunks[i] for i in I[0]]
+
+# ------------------ INFO EXTRACTION ------------------
 def extract_age(query):
     match = re.search(r'(\d+)[-\s]?year', query.lower())
     return int(match.group(1)) if match else None
 
 def extract_policy_months(query):
-    query = query.lower()
-
-    # weeks → months
     if "week" in query:
         num = int(re.findall(r'\d+', query)[-1])
-        return round(num / 4, 2)
-
-    # months
+        return round(num/4,2)
     if "month" in query:
-        num = int(re.findall(r'\d+', query)[-1])
-        return num
-
-    # years → months
+        return int(re.findall(r'\d+', query)[-1])
     if "year" in query:
-        num = int(re.findall(r'\d+', query)[-1])
-        return num * 12
+        return int(re.findall(r'\d+', query)[-1]) * 12
+    return None
 
-    return 1
+# ------------------ LLM RESPONSE ------------------
+def generate_answer(query, context):
+    prompt = f"""
+You are an expert insurance AI.
 
-def detect_procedure(query):
-    q = query.lower()
+Use ONLY the context below to answer.
 
-    if "appendectomy" in q:
-        return "Emergency Appendectomy", True
-    elif "accident" in q:
-        return "Accident Treatment", True
-    elif "cosmetic" in q:
-        return "Cosmetic Surgery", False
-    elif "cataract" in q:
-        return "Cataract Surgery", False
-    elif "dental" in q:
-        return "Dental Treatment", False
-    elif "knee" in q:
-        return "Knee Surgery", False
-    elif "gallbladder" in q:
-        return "Gallbladder Surgery", False
-    else:
-        return "General Treatment", False
+Context:
+{context}
 
-def extract_location(query):
-    cities = ["pune", "mumbai", "delhi", "bangalore", "hyderabad"]
-    for city in cities:
-        if city in query.lower():
-            return city.capitalize()
-    return "Unknown"
+Question:
+{query}
 
-def decision_engine(query):
-    age = extract_age(query)
-    policy_months = extract_policy_months(query)
-    procedure, is_emergency = detect_procedure(query)
-    location = extract_location(query)
+Give output in this format:
+Decision:
+Reason:
+"""
 
-    q = query.lower()
+    output = generator(prompt, max_length=300, do_sample=True)[0]["generated_text"]
+    return output
 
-    # Decision rules
-    if is_emergency:
-        decision = "Approved"
-        reason = "Emergency hospitalization is covered even during waiting period."
-        confidence = 98
+# ------------------ UI ------------------
 
-    elif "cosmetic" in q:
-        decision = "Rejected"
-        reason = "Cosmetic procedures are excluded unless medically necessary."
-        confidence = 95
-
-    elif "dental" in q:
-        decision = "Rejected"
-        reason = "Dental treatments are excluded unless caused by accident."
-        confidence = 92
-
-    elif policy_months < 12:
-        decision = "Rejected"
-        reason = "Waiting period not completed."
-        confidence = 90
-
-    else:
-        decision = "Approved"
-        reason = "Covered under policy after waiting period."
-        confidence = 93
-
-    return {
-        "query": query,
-        "age": age,
-        "location": location,
-        "procedure": procedure,
-        "policy_months": policy_months,
-        "decision": decision,
-        "confidence": confidence,
-        "reason": reason
-    }
+st.title("🧠 PolicyMind v2.0")
+tab = st.radio("", ["🏠 Home", "📄 Query", "🧠 AI Response", "📊 Details", "📜 History"], horizontal=True)
 
 # ------------------ HOME ------------------
 if tab == "🏠 Home":
-    st.subheader("Welcome to PolicyMind v2.0 🚀")
-    st.markdown("""
-    - ⚡ Instant Policy Analysis  
-    - 💬 Ask in plain English  
-    - 📊 Get structured results  
-    - 📜 Track history  
-    """)
+    st.subheader("Welcome 🚀")
+    st.write("Upload policy → Ask question → Get AI decision")
 
 # ------------------ QUERY ------------------
 elif tab == "📄 Query":
 
-    st.subheader("📂 Upload Policy Document")
+    st.subheader("Upload Policy Document")
     file = st.file_uploader("Upload PDF", type=["pdf"])
 
     if file:
-        st.success("Document uploaded and indexed successfully ✅")
+        text = extract_text_from_pdf(file)
+        chunks = split_text(text)
 
-    st.subheader("💬 Ask Your Question")
+        index, embeddings = create_vector_db(chunks)
 
-    query = st.text_input("Example: 46-year-old male, knee surgery in Pune, 3-month policy")
+        st.session_state.vector_db = index
+        st.session_state.chunks = chunks
 
-    if st.button("🚀 Analyze with AI"):
+        st.success("Document indexed successfully ✅")
 
-        if query:
-            result = decision_engine(query)
+    query = st.text_input("Ask your question")
+
+    if st.button("Analyze"):
+
+        if st.session_state.vector_db is None:
+            st.error("Upload PDF first")
+        elif query:
+
+            relevant_chunks = retrieve(query, st.session_state.vector_db, st.session_state.chunks)
+
+            context = " ".join(relevant_chunks)
+
+            answer = generate_answer(query, context)
+
+            result = {
+                "query": query,
+                "answer": answer,
+                "context": context,
+                "age": extract_age(query),
+                "policy_months": extract_policy_months(query)
+            }
 
             st.session_state.result = result
             st.session_state.history.append(result)
 
-            st.success("Analysis Completed! Go to AI Response tab 👉")
+            st.success("Go to AI Response tab 👉")
 
 # ------------------ AI RESPONSE ------------------
 elif tab == "🧠 AI Response":
 
-    st.subheader("🧠 AI Analysis Result")
-
     if "result" in st.session_state:
         r = st.session_state.result
 
-        st.success("💡 You are an Insurance AI")
+        st.subheader("AI Result")
 
-        st.markdown(f"""
-### ✅ Decision: **{r['decision']}**
-### 💰 Coverage: **Up to Sum Insured**
-### 📌 Procedure: **{r['procedure']}**
-### 📍 Location: **{r['location']}**
-### 👤 Age: **{r['age']}**
-### 📅 Policy Duration: **{r['policy_months']} months**
-
-### 💡 Explanation:
-{r['reason']}
-
-### 📊 Confidence: **{r['confidence']}%**
-
-### 🚀 Next Steps:
-- Proceed if approved
-- Keep documents ready
-""")
+        st.write(r["answer"])
 
     else:
-        st.warning("No analysis yet")
+        st.warning("No result yet")
 
 # ------------------ DETAILS ------------------
 elif tab == "📊 Details":
 
-    st.subheader("📊 Detailed Output")
-
     if "result" in st.session_state:
         st.json(st.session_state.result)
-    else:
-        st.warning("No data")
 
 # ------------------ HISTORY ------------------
 elif tab == "📜 History":
 
-    st.subheader("📜 History")
-
-    if st.session_state.history:
-        for item in reversed(st.session_state.history):
-            st.write(f"🔹 {item['query']}")
-            st.write(f"   ➤ {item['decision']} ({item['confidence']}%)")
-            st.write("---")
-    else:
-        st.warning("No history yet")
+    for item in reversed(st.session_state.history):
+        st.write(item["query"])
+        st.write(item["answer"])
+        st.write("---")
