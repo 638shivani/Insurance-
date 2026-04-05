@@ -18,15 +18,14 @@ genai.configure(api_key=API_KEY)
 # ---------------- MODEL AUTO DETECT ----------------
 def load_model():
     try:
-        models = [m.name for m in genai.list_models()]
-
-        for name in models:
-            if "gemini" in name and "generateContent" in str(name):
-                return genai.GenerativeModel(name)
-
-        return genai.GenerativeModel(models[0])
-
-    except:
+        models = genai.list_models()
+        for m in models:
+            if "gemini" in m.name and "generateContent" in m.supported_generation_methods:
+                return genai.GenerativeModel(m.name)
+        # fallback if detection fails
+        return genai.GenerativeModel("models/gemini-1.5-flash")
+    except Exception as e:
+        st.error(f"Model load failed: {e}")
         return None
 
 model = load_model()
@@ -102,8 +101,8 @@ Decision: Approved or Rejected
 Reason: one short line
 """
 
-        response = model.generate_content(prompt)
-        text = response.text
+        response = model.generate_content([prompt])
+        text = response.candidates[0].content.parts[0].text
 
         decision = "Unknown"
         reason = "Not found"
