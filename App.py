@@ -80,26 +80,15 @@ if not API_KEY:
 genai.configure(api_key=API_KEY)
 
 @st.cache_resource
-def load_stable_model():
-    """ Tries the latest 2026 Gemini 3 models to avoid 404 errors """
-    # Priority: Gemini 3.1 Flash-Lite -> Gemini 3 Flash -> Fallback to dynamic list
-    preferred = ["gemini-3.1-flash-lite", "gemini-3-flash", "gemini-2.5-flash"]
-    try:
-        # Check allowed models for this key
-        allowed = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        for p in preferred:
-            for a in allowed:
-                if p in a:
-                    m = genai.GenerativeModel(a)
-                    m.generate_content("ping", generation_config={"max_output_tokens": 1})
-                    return m, a
-        if allowed:
-            return genai.GenerativeModel(allowed[0]), allowed[0]
-    except Exception as e:
-        return None, str(e)
-    return None, "No models available"
+import google.generativeai as genai
+import os
 
-model, model_id = load_stable_model()
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+model = genai.GenerativeModel("gemini-1.5-flash")
+
+model = genai.GenerativeModel("gemini-1.5-flash")
+model_name = "gemini-1.5-flash"
 
 # ---------------- MULTILINGUAL DATA ----------------
 LANG_DB = {
