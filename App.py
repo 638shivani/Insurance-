@@ -4,19 +4,24 @@ import PyPDF2
 import re
 import json
 
-# ---------------- CONFIG & OBSIDIAN DARK CSS ----------------
+# ---------------- CONFIG & PURE OBSIDIAN CSS ----------------
 st.set_page_config(page_title="PolicyMind Pro", layout="wide", page_icon="🧠")
 
-# Full Obsidian Theme Injection
+# Full UI Overhaul - Removing all white/gray leaks
 st.markdown("""
     <style>
-    /* Global Obsidian Background */
-    .stApp, [data-testid="stSidebar"], section[data-testid="stSidebar"] > div {
+    /* Global Backgrounds */
+    .stApp, [data-testid="stSidebar"], [data-testid="stSidebarNav"] {
         background-color: #080A0D !important;
         color: #E5E7EB !important;
     }
+    
+    /* Sidebar Fixes */
+    [data-testid="stSidebar"] {
+        border-right: 1px solid #1F2937 !important;
+    }
 
-    /* LANGUAGE SELECTBOX FIX (Matches Dark UI) */
+    /* LANGUAGE SELECTBOX FIX */
     div[data-baseweb="select"] > div {
         background-color: #0F1217 !important;
         color: white !important;
@@ -37,14 +42,29 @@ st.markdown("""
 
     /* Dashboard & Metric Cards */
     .metric-card {
-        background-color: #111827;
+        background-color: #0F1217;
         border: 1px solid #1F2937;
         border-radius: 12px;
         padding: 20px;
         text-align: center;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.5);
     }
     
+    /* File Uploader Dark Mode */
+    [data-testid="stFileUploader"] {
+        background-color: #0F1217;
+        border: 1px dashed #30363D;
+        border-radius: 12px;
+        padding: 10px;
+    }
+    
+    /* Alerts (Info, Success, Warning) */
+    .stAlert {
+        background-color: #0F1217 !important;
+        color: #E5E7EB !important;
+        border: 1px solid #1F2937 !important;
+    }
+
     /* Neon Accents */
     h1, h2, h3, h4 { color: #60A5FA !important; }
     .stButton>button {
@@ -65,6 +85,10 @@ st.markdown("""
     }
     .stTabs [data-baseweb="tab-list"] { background-color: transparent; }
     .stTabs [aria-selected="true"] { color: #60A5FA !important; border-bottom-color: #60A5FA !important; }
+    
+    /* Remove white shadows from standard Streamlit elements */
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -78,11 +102,8 @@ genai.configure(api_key=API_KEY)
 
 @st.cache_resource
 def load_stable_model():
-    """ Tries the latest 2026 Gemini 3 models to avoid 404 errors """
-    # Priority: Gemini 3.1 Flash-Lite -> Gemini 3 Flash -> Fallback to dynamic list
     preferred = ["gemini-3.1-flash-lite", "gemini-3-flash", "gemini-2.5-flash"]
     try:
-        # Check allowed models for this key
         allowed = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         for p in preferred:
             for a in allowed:
@@ -101,8 +122,8 @@ model, model_id = load_stable_model()
 # ---------------- MULTILINGUAL DATA ----------------
 LANG_DB = {
     "English": {
-        "title": "🧠 PolicyMind Pro v5.0",
-        "intro": "Welcome to the future of insurance analysis.",
+        "title": "🧠 PolicyMind Pro v5.5",
+        "intro": "Premium Insurance Intelligence Engine",
         "how": "How to use",
         "steps": ["Upload Policy PDF", "Ask a Medical Scenario", "Analyze Coverage"],
         "examples_title": "💡 Example Scenarios",
@@ -111,8 +132,8 @@ LANG_DB = {
         "labels": ["Decision", "Certainty", "Policy Age", "Procedure"]
     },
     "Hindi": {
-        "title": "🧠 पॉलिसीमाइंड प्रो v5.0",
-        "intro": "बीमा विश्लेषण के भविष्य में आपका स्वागत है।",
+        "title": "🧠 पॉलिसीमाइंड प्रो v5.5",
+        "intro": "प्रीमियम बीमा इंटेलिजेंस इंजन",
         "how": "उपयोग कैसे करें",
         "steps": ["पॉलिसी PDF अपलोड करें", "एक चिकित्सा स्थिति पूछें", "कवरेज का विश्लेषण करें"],
         "examples_title": "💡 उदाहरण प्रश्न",
@@ -121,8 +142,8 @@ LANG_DB = {
         "labels": ["निर्णय", "विश्वास", "पॉलिसी की आयु", "प्रक्रिया"]
     },
     "Kannada": {
-        "title": "🧠 ಪಾಲಿಸಿಮೈಂಡ್ ಪ್ರೊ v5.0",
-        "intro": "ವಿಮಾ ವಿಶ್ಲೇಷಣೆಯ ಭವಿಷ್ಯಕ್ಕೆ ಸುಸ್ವಾಗತ.",
+        "title": "🧠 ಪಾಲಿಸಿಮೈಂಡ್ ಪ್ರೊ v5.5",
+        "intro": "ಪ್ರೀಮಿಯಂ ವಿಮಾ ಇಂಟೆಲಿಜೆನ್ಸ್ ಎಂಜಿನ್",
         "how": "ಬಳಸುವುದು ಹೇಗೆ",
         "steps": ["ಪಾಲಿಸಿ PDF ಅಪ್‌ಲೋಡ್ ಮಾಡಿ", "ವೈದ್ಯಕೀಯ ಪ್ರಶ್ನೆಯನ್ನು ಕೇಳಿ", "ಕವರೇಜ್ ವಿಶ್ಲೇಷಿಸಿ"],
         "examples_title": "💡 ಉದಾಹರಣೆ ಪ್ರಶ್ನೆಗಳು",
@@ -138,9 +159,9 @@ sel_lang = st.sidebar.selectbox("🌐 Select Language", ["English", "Hindi", "Ka
 L = LANG_DB[sel_lang]
 
 if model:
-    st.sidebar.success(f"⚡ Connected to: {model_id}")
+    st.sidebar.success(f"⚡ Connected: {model_id}")
 else:
-    st.sidebar.error("🚨 AI Handshake Failed. Verify API Key permissions.")
+    st.sidebar.error("🚨 Connection Failed")
 
 # ---------------- STATE ----------------
 if "history" not in st.session_state: st.session_state.history = []
