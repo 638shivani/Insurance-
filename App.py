@@ -4,149 +4,118 @@ import PyPDF2
 import re
 import json
 
-# ---------------- CONFIG & OBSIDIAN DARK CSS ----------------
+# ---------------- CONFIG & OBSIDIAN CSS ----------------
 st.set_page_config(page_title="PolicyMind Pro", layout="wide", page_icon="🧠")
 
+# Custom CSS to force deep dark theme and style the dropdown
 st.markdown("""
     <style>
-    /* Obsidian Pro Theme */
-    .stApp, div[data-testid="stSidebar"] {
-        background-color: #080A0D;
-        color: #E5E7EB;
-    }
-    /* Selectbox Dropdown Container Styling - Matches Image 2 */
-    .stSelectbox > div[data-baseweb="select"] {
-        background-color: #111827 !important;
-        border: 1px solid #30363D !important;
-        border-radius: 8px;
-    }
-    /* Selectbox Dropdown Value Text (White Text) */
-    .stSelectbox div[data-testid="stMarkdownContainer"] p {
+    /* Global Background */
+    .stApp, [data-testid="stSidebar"] {
+        background-color: #080A0D !important;
         color: #E5E7EB !important;
     }
-    /* Selectbox Arrow Color */
-    .stSelectbox svg { color: #60A5FA !important; }
 
-    /* Sleek Obsidian Cards */
-    .metric-container, div.stExpander, div.stButton button {
-        background-color: #0F1217 !important;
-        border: 1px solid #1F2937 !important;
-        border-radius: 12px !important;
-        padding: 15px !important;
+    /* Sidebar Language Dropdown (Fixes the White Color) */
+    div[data-baseweb="select"] > div {
+        background-color: #111827 !important;
+        color: white !important;
+        border: 1px solid #30363D !important;
     }
-    /* Input Fields (Ask a Question) */
-    div.stTextInput input {
+    div[role="listbox"] ul {
+        background-color: #111827 !important;
+    }
+    div[role="option"] {
+        color: white !important;
+        background-color: #111827 !important;
+    }
+    div[role="option"]:hover {
+        background-color: #1F2937 !important;
+    }
+
+    /* Cards and Containers */
+    .metric-card {
         background-color: #0F1217;
-        color: white; border-color: #30363D;
-        border-radius: 8px;
+        border: 1px solid #1F2937;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
     }
-    div.stTextInput input:focus {
-        border-color: #58A6FF;
-    }
-
-    /* Metric Cards Styling */
-    .stat-card {
-        background: #111827; border: 1px solid #1F2937;
-        padding: 20px; border-radius: 15px; text-align: center;
-    }
-    .stat-val { font-size: 32px; font-weight: bold; margin-bottom: 5px; color: #58A6FF; }
-    .stat-label { color: #9CA3AF; font-size: 14px; text-transform: uppercase; }
     
-    /* Neon Accents and Headers */
-    h1, h2, h3, h4 { color: #60A5FA !important; }
-    div[data-testid="stMetricValue"] { color: #58A6FF; }
-    div[data-testid="toast-container"] { background-color: #111827; }
+    /* Buttons */
+    .stButton>button {
+        background: linear-gradient(94deg, #1E40AF 0%, #3B82F6 100%);
+        color: white; border: none; border-radius: 8px;
+        width: 100%; transition: 0.3s;
+    }
+    .stButton>button:hover {
+        box-shadow: 0px 0px 20px rgba(59, 130, 246, 0.4);
+        border: none;
+    }
 
-    /* Tabs Styling */
-    .stTabs [data-baseweb="tab-list"] { background-color: transparent; }
-    .stTabs [data-baseweb="tab"] { color: #9CA3AF; }
-    .stTabs [aria-selected="true"] { color: #60A5FA !important; border-bottom-color: #60A5FA !important; }
+    /* Text Inputs */
+    input {
+        background-color: #0F1217 !important;
+        color: white !important;
+        border: 1px solid #30363D !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# ---------------- API SETUP ----------------
+# ---------------- API & MODEL LOADER ----------------
 API_KEY = st.secrets.get("GEMINI_API_KEY")
 if not API_KEY:
-    st.error("❌ GEMINI_API_KEY is missing from Streamlit Secrets.")
+    st.error("❌ GEMINI_API_KEY Missing in Secrets")
     st.stop()
 
 genai.configure(api_key=API_KEY)
 
-# ---------------- ROBUST 2026 MODEL LOADER (ERROR FIX) ----------------
 @st.cache_resource
-def load_working_model():
-    """ 
-    Tries stable model names for 2026 to prevent 404 errors. 
-    Returns: (Model Object, Error Message)
-    """
-    latest_models = ["gemini-3-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-pro"]
-    
-    last_error = "No models attempted"
-    for name in latest_models:
+def load_model():
+    # Attempt to find a working 2026 model to avoid 404
+    for m_name in ["gemini-3-flash", "gemini-2.5-flash", "gemini-1.5-flash"]:
         try:
-            m = genai.GenerativeModel(name)
-            # Health check generation
-            m.generate_content("healthcheck", generation_config={"max_output_tokens": 1})
-            return m, None
-        except Exception as e:
-            last_error = str(e)
-            continue
-    return None, last_error
+            m = genai.GenerativeModel(m_name)
+            m.generate_content("ok", generation_config={"max_output_tokens": 1})
+            return m
+        except: continue
+    return None
 
-# Attempt to load the model
-model, connection_error = load_working_model()
+model = load_model()
 
-# ---------------- LANGUAGES DICTIONARY ----------------
-LANG = {
+# ---------------- LANGUAGE DATA ----------------
+LANG_MAP = {
     "English": {
-        "title": "🧠 PolicyMind Pro",
-        "labels": ["Decision", "Certainty", "Policy Age", "Procedure"],
-        "history_tab": "📜 Analytics & History",
-        "ai_tab": "🧠 AI Analysis Deep Dive",
-        "analyze_btn": "🚀 Analyze Coverage",
-        "upload_doc": "Upload Insurance Policy (PDF)",
-        "ask_label": "Describe the medical scenario:",
-        "placeholder": "e.g., I have had this policy for 2 years, is dental checkup covered?",
-        "history_title": "Coverage Insights (Analytics Summary)",
-        "stats": ["Total Requests", "Approved", "Rejected"],
-        "how_works": "🔍 How PolicyMind Pro Works",
-        "steps": ["Upload your PDF Policy", "Ask a medical question", "Get instance AI validation"]
+        "welcome": "Welcome to PolicyMind Pro",
+        "how": "How to use",
+        "steps": ["1. Upload Policy PDF", "2. Ask a Claim Question", "3. Get AI Analysis"],
+        "examples": ["I have had this policy for 2 years, is dental checkup covered?", "Does this policy cover emergency heart surgery?"],
+        "metrics": ["Decision", "Confidence", "Policy Age", "Procedure"],
+        "stats_labels": ["Total Queries", "Approved", "Rejected"]
     },
     "Hindi": {
-        "title": "🧠 पॉलिसीमाइंड प्रो (PolicyMind Pro)",
-        "labels": ["निर्णय", "विश्वास", "पॉलिसी की आयु", "प्रक्रिया"],
-        "history_tab": "📜 एनालिटिक्स और इतिहास",
-        "ai_tab": "🧠 AI विश्लेषण डीप डाइव",
-        "analyze_btn": "🚀 कवरेज विश्लेषण",
-        "upload_doc": "बीमा पॉलिसी (PDF) अपलोड करें",
-        "ask_label": "चिकित्सा परिदृश्य का वर्णन करें:",
-        "placeholder": "उदाहरण के लिए, मेरे पास यह पॉलिसी 2 वर्षों से है, क्या डेंटल चेकअप कवर है?",
-        "history_title": "कवरेज अंतर्दृष्टि (एनालिटिक्स सारांश)",
-        "stats": ["कुल अनुरोध", "स्वीकृत", "अस्वीकृत"],
-        "how_works": "🔍 पॉलिसीमाइंड प्रो कैसे काम करता है",
-        "steps": ["अपनी PDF पॉलिसी अपलोड करें", "एक चिकित्सा प्रश्न पूछें", "AI निर्णय प्राप्त करें"]
+        "welcome": "पॉलिसीमाइंड प्रो में आपका स्वागत है",
+        "how": "उपयोग कैसे करें",
+        "steps": ["1. पॉलिसी PDF अपलोड करें", "2. दावा प्रश्न पूछें", "3. AI विश्लेषण प्राप्त करें"],
+        "examples": ["मेरे पास यह पॉलिसी 2 साल से है, क्या डेंटल चेकअप कवर है?", "क्या यह पॉलिसी इमरजेंसी हार्ट सर्जरी को कवर करती है?"],
+        "metrics": ["निर्णय", "विश्वास", "पॉलिसी आयु", "प्रक्रिया"],
+        "stats_labels": ["कुल प्रश्न", "स्वीकृत", "अस्वीकृत"]
     },
     "Kannada": {
-        "title": "🧠 ಪಾಲಿಸಿಮೈಂಡ್ ಪ್ರೊ (PolicyMind Pro)",
-        "labels": ["ತೀರ್ಮಾನ", "ನಂಬಿಕೆ", "ಪಾಲಿಸಿ ಅವಧಿ", "ಕಾರ್ಯವಿಧಾನ"],
-        "history_tab": "📜 ಅನಾಲಿಟಿಕ್ಸ್ ಮತ್ತು ಇತಿಹಾಸ",
-        "ai_tab": "🧠 AI ವಿಶ್ಲೇಷಣೆಯ ಆಳವಾದ ಡೈವ್",
-        "analyze_btn": "🚀 ಕವರೇಜ್ ವಿಶ್ಲೇಷಣೆ ನಡೆಸಿ",
-        "upload_doc": "ವಿಮಾ ಪಾಲಿಸಿ (PDF) ಅಪ್‌ಲೋಡ್ ಮಾಡಿ",
-        "ask_label": "ವೈದ್ಯಕೀಯ ಸನ್ನಿವೇಶವನ್ನು ವಿವರಿಸಿ:",
-        "placeholder": "ಉದಾಹರಣೆಗೆ, ನನ್ನ ಬಳಿ ಈ ಪಾಲಿಸಿ 2 ವರ್ಷಗಳಿಂದ ಇದೆ, ಹಲ್ಲಿನ ತಪಾಸಣೆ ಕವರ್ ಆಗುತ್ತದೆಯೇ?",
-        "history_title": "ಕವರೇಜ್ ಒಳನೋಟಗಳು (ಅನಾಲಿಟಿಕ್ಸ್ ಸಾರಾಂಶ)",
-        "stats": ["ಒಟ್ಟು ವಿನಂತಿಗಳು", "ಅನುಮೋದಿಸಲಾಗಿದೆ", "ತಿರಸ್ಕರಿಸಲಾಗಿದೆ"],
-        "how_works": "🔍 ಪಾಲಿಸಿಮೈಂಡ್ ಪ್ರೊ ಹೇಗೆ ಕೆಲಸ ಮಾಡುತ್ತದೆ",
-        "steps": ["ನಿಮ್ಮ PDF ಪಾಲಿಸಿಯನ್ನು ಅಪ್‌ಲೋಡ್ ಮಾಡಿ", "ವೈದ್ಯಕೀಯ ಪ್ರಶ್ನೆಯನ್ನು ಕೇಳಿ", "AI ತೀರ್ಮಾನವನ್ನು ಪಡೆಯಿರಿ"]
+        "welcome": "ಪಾಲಿಸಿಮೈಂಡ್ ಪ್ರೊಗೆ ಸುಸ್ವಾಗತ",
+        "how": "ಬಳಸುವುದು ಹೇಗೆ",
+        "steps": ["1. ಪಾಲಿಸಿ PDF ಅಪ್‌ಲೋಡ್ ಮಾಡಿ", "2. ಕ್ಲೈಮ್ ಪ್ರಶ್ನೆ ಕೇಳಿ", "3. AI ವಿಶ್ಲೇಷಣೆ ಪಡೆಯಿರಿ"],
+        "examples": ["ನನ್ನ ಬಳಿ ಈ ಪಾಲಿಸಿ 2 ವರ್ಷಗಳಿಂದ ಇದೆ, ಹಲ್ಲಿನ ತಪಾಸಣೆ ಕವರ್ ಆಗುತ್ತದೆಯೇ?", "ಈ ಪಾಲಿಸಿಯು ತುರ್ತು ಹೃದಯ ಶಸ್ತ್ರಚಿಕಿತ್ಸೆಯನ್ನು ಕವರ್ ಮಾಡುತ್ತದೆಯೇ?"],
+        "metrics": ["ತೀರ್ಮಾನ", "ನಂಬಿಕೆ", "ಪಾಲಿಸಿ ಅವಧಿ", "ಕಾರ್ಯವಿಧಾನ"],
+        "stats_labels": ["ಒಟ್ಟು ಪ್ರಶ್ನೆಗಳು", "ಅನುಮೋದಿಸಲಾಗಿದೆ", "ತಿರಸ್ಕರಿಸಲಾಗಿದೆ"]
     }
 }
 
-# ---------------- SIDEBAR: LANGUAGE SELECTION ----------------
-# Dropdown style defined in CSS above (data-baseweb="select")
-st.sidebar.markdown("### UI Controls")
-selected_lang = st.sidebar.selectbox("🌐 Select Interface Language", ["English", "Hindi", "Kannada"])
-T = LANG[selected_lang]
+# ---------------- SIDEBAR ----------------
+st.sidebar.title("Settings")
+sel_lang = st.sidebar.selectbox("🌐 Language / ಭಾಷೆ / भाषा", ["English", "Hindi", "Kannada"])
+L = LANG_MAP[sel_lang]
 
 # ---------------- SESSION STATE ----------------
 if "history" not in st.session_state: st.session_state.history = []
@@ -154,135 +123,103 @@ if "pdf_text" not in st.session_state: st.session_state.pdf_text = ""
 if "latest" not in st.session_state: st.session_state.latest = None
 
 # ---------------- LOGIC ----------------
-def extract_pdf_text(file):
+def get_pdf_text(file):
     reader = PyPDF2.PdfReader(file)
     return "\n".join([p.extract_text() or "" for p in reader.pages])
 
-def generate_ai_analysis(query, context, lang):
-    """ Instructs Gemini to return structured JSON for metrics display """
+def run_ai_logic(query, context, lang_name):
     prompt = f"""
-    Context: {context[:12000]}
+    Policy: {context[:12000]}
     Query: {query}
-    Respond in {lang}. 
-    Output ONLY a clean JSON object (no markdown formatting):
-    {{
-        "decision": "Approved or Rejected",
-        "reason": "Clear explanation",
-        "confidence": "Estimation in %",
-        "policy_age": "Detected age of policy",
-        "procedure": "Detected medical procedure"
-    }}
+    Respond in {lang_name}. Output JSON:
+    {{"decision": "Approved/Rejected", "reason": "Short explanation", "conf": "X%", "age": "Detected", "proc": "Detected"}}
     """
     try:
-        raw_response = model.generate_content(prompt).text
-        # Safety for markdown code blocks
-        json_clean = raw_response.replace('```json', '').replace('```', '').strip()
-        return json.loads(json_clean)
-    except Exception as e:
-        return {"decision": "Error", "reason": str(e), "confidence": "0%", "policy_age": "N/A", "procedure": "N/A"}
+        raw = model.generate_content(prompt).text
+        clean = raw.replace('```json', '').replace('```', '').strip()
+        return json.loads(clean)
+    except:
+        return {"decision": "Error", "reason": "Check AI Connection", "conf": "0%", "age": "N/A", "proc": "N/A"}
 
-# ---------------- UI: HOME DASHBOARD ----------------
-st.title(T["title"])
+# ---------------- UI: HOME ----------------
+st.title(L["welcome"])
 
-with st.expander(T["how_works"], expanded=True):
-    col1, col2 = st.columns(2)
-    with col1:
-        for step in T["steps"]:
-            st.write(f"🔹 {step}")
-    with col2:
-        st.info(f"💡 **Try an Example Question:**\n\n{T['placeholder']}")
+# Home Page Info
+c1, c2 = st.columns([2, 1])
+with c1:
+    st.subheader(L["how"])
+    for step in L["steps"]:
+        st.write(f"🔹 {step}")
+with c2:
+    st.markdown("### 💡 Example Questions")
+    for ex in L["examples"]:
+        st.info(ex)
 
 st.divider()
 
-# Connection Status Guard
 if not model:
-    st.error(f"🚨 AI Offline. Model handshake failed. | Last Error: {connection_error}")
-    st.info("Check API Key permissions or Streamlit Cloud region settings.")
+    st.error("🚨 AI Handshake Failed. Verify API Key and check logs.")
     st.stop()
 
-# ---------------- MAIN TABS ----------------
-tab1, tab2, tab3 = st.tabs(["📄 Document Center", "🧠 " + T["ai_tab"], "📊 " + T["history_tab"]])
+# ---------------- TABS ----------------
+t1, t2, t3 = st.tabs(["📄 Upload", "🧠 AI Analysis", "📊 History & Stats"])
 
-with tab1:
-    uploaded = st.file_uploader(T["upload_doc"], type="pdf")
-    if uploaded:
-        st.session_state.pdf_text = extract_pdf_text(uploaded)
-        st.success("✅ Policy Indexed and Ready")
-
-    user_query = st.text_input(T["ask_label"], placeholder=T["placeholder"])
-
-    if st.button(T["analyze_btn"]):
-        if not st.session_state.pdf_text or not user_query:
-            st.warning("Please upload a policy and describe the medical scenario first.")
-        else:
-            with st.spinner("AI analyzing policy document..."):
-                res = generate_ai_analysis(user_query, st.session_state.pdf_text, selected_lang)
+with t1:
+    up = st.file_uploader("Upload Insurance Document", type="pdf")
+    if up: 
+        st.session_state.pdf_text = get_pdf_text(up)
+        st.success("Document Indexed")
+    
+    q = st.text_input("Ask about your coverage:")
+    if st.button("🚀 Analyze Now"):
+        if st.session_state.pdf_text and q:
+            with st.spinner("Analyzing..."):
+                res = run_ai_logic(q, st.session_state.pdf_text, sel_lang)
                 st.session_state.latest = res
                 st.session_state.history.append(res)
-                st.toast("Analysis Complete!")
+        else: st.warning("Please upload a file and enter a query.")
 
-with tab2:
+with t2:
     if st.session_state.latest:
         res = st.session_state.latest
+        banner_color = "#10B981" if res["decision"] in ["Approved", "ಅನುಮೋದಿಸಲಾಗಿದೆ", "स्वीकृत"] else "#EF4444"
         
-        # Decision Banner
-        decision_color = "#10B981" if res["decision"] in ["Approved", "स्वीकृत", "ಅನುಮೋದಿಸಲಾಗಿದೆ"] else "#EF4444"
-        if res["decision"] == "Error": decision_color = "#F59E0B" # Orange for error
-
         st.markdown(f"""
-        <div style="border-left: 10px solid {decision_color}; background-color: #111827; padding: 30px; border-radius: 12px; margin-bottom: 25px; box-shadow: 2px 2px 10px rgba(0,0,0,0.1);">
-            <h1 style="color: {decision_color} !important; margin: 0;">{res['decision']}</h1>
-            <p style="color: #E5E7EB; font-size: 1.2rem; margin-top: 10px;">{res['reason']}</p>
+        <div style="background-color: {banner_color}; padding: 25px; border-radius: 12px; margin-bottom: 25px;">
+            <h2 style="color: white !important; margin:0;">{res['decision']}</h2>
+            <p style="color: white; font-size: 1.1em; margin-top:10px;">{res['reason']}</p>
         </div>
         """, unsafe_allow_html=True)
-
-        st.markdown(f"### 📊 Analysis Metrics Summary")
         
-        # Metric Grid (Styled obsidian cards)
-        m_labels = T["labels"]
-        col1, col2, col3, col4 = st.columns(4)
-        
-        # Metric 1: Status
-        with col1:
-            st.markdown(f'<div class="metric-container"><small style="color:#9CA3AF;">{m_labels[0]}</small><br><b style="font-size:1.8em; color:{decision_color};">{res["decision"]}</b></div>', unsafe_allow_html=True)
-        # Metric 2: Confidence
-        with col2:
-            st.markdown(f'<div class="metric-container"><small style="color:#9CA3AF;">{m_labels[1]}</small><br><b style="font-size:1.8em; color:#58A6FF;">{res["confidence"]}</b></div>', unsafe_allow_html=True)
-        # Metric 3: Age
-        with col3:
-            st.markdown(f'<div class="metric-container"><small style="color:#9CA3AF;">{m_labels[2]}</small><br><b style="font-size:1.8em; color:#E5E7EB;">{res["policy_age"]}</b></div>', unsafe_allow_html=True)
-        # Metric 4: Procedure
-        with col4:
-            st.markdown(f'<div class="metric-container"><small style="color:#9CA3AF;">{m_labels[3]}</small><br><b style="font-size:1.8em; color:#E5E7EB;">{res["procedure"]}</b></div>', unsafe_allow_html=True)
+        cols = st.columns(4)
+        m_vals = [res["decision"], res["conf"], res["age"], res["proc"]]
+        for i, col in enumerate(cols):
+            with col:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div style="color: #9CA3AF; font-size: 0.8em; text-transform: uppercase;">{L['metrics'][i]}</div>
+                    <div style="font-size: 1.5em; font-weight: bold; color: #60A5FA;">{m_vals[i]}</div>
+                </div>
+                """, unsafe_allow_html=True)
+    else: st.info("Results will appear here.")
 
-    else:
-        st.info("Results will appear here after you analyze your query.")
-
-with tab3:
-    st.subheader(T["history_title"])
-    
-    # Coverage Insights (Multilingual Counters)
+with t3:
+    # --- Statistics Dashboard ---
     total = len(st.session_state.history)
-    # Checks for Translated "Approved" across English, Hindi, and Kannada
-    approved = sum(1 for x in st.session_state.history if x['decision'] in ["Approved", "स्वीकृत", "ಅನುಮೋದಿಸಲಾಗಿದೆ"])
-    rejected = total - approved
+    appr = sum(1 for x in st.session_state.history if x['decision'] in ["Approved", "ಅನುಮೋದಿಸಲಾಗಿದೆ", "स्वीकृत"])
+    rej = total - appr
 
-    c1, c2, c3 = st.columns(3)
-    # Analytics Metrics Cards
-    with c1: st.markdown(f'<div class="stat-card"><div class="stat-label">{T["stats"][0]}</div><div class="stat-val">{total}</div></div>', unsafe_allow_html=True)
-    with c2: st.markdown(f'<div class="stat-card"><div class="stat-label">{T["stats"][1]}</div><div class="stat-val" style="color:#10B981;">{approved}</div></div>', unsafe_allow_html=True)
-    with c3: st.markdown(f'<div class="stat-card"><div class="stat-label">{T["stats"][2]}</div><div class="stat-val" style="color:#EF4444;">{rejected}</div></div>', unsafe_allow_html=True)
-    
+    st.subheader(f"📊 {L['stats_labels'][0]}")
+    sc1, sc2, sc3 = st.columns(3)
+    with sc1:
+        st.markdown(f'<div class="metric-card"><div style="color:#9CA3AF;">{L["stats_labels"][0]}</div><div style="font-size:2em; font-weight:bold;">{total}</div></div>', unsafe_allow_html=True)
+    with sc2:
+        st.markdown(f'<div class="metric-card"><div style="color:#9CA3AF;">{L["stats_labels"][1]}</div><div style="font-size:2em; font-weight:bold; color:#10B981;">{appr}</div></div>', unsafe_allow_html=True)
+    with sc3:
+        st.markdown(f'<div class="metric-card"><div style="color:#9CA3AF;">{L["stats_labels"][2]}</div><div style="font-size:2em; font-weight:bold; color:#EF4444;">{rej}</div></div>', unsafe_allow_html=True)
+
     st.divider()
-    
-    if st.session_state.history:
-        for item in reversed(st.session_state.history):
-            exp_color = "#10B981" if item["decision"] in ["Approved", "स्वीकृत", "ಅನುಮೋದಿಸಲಾಗಿದೆ"] else "#EF4444"
-            with st.expander(f"🕒 {item['query'][:60]}... (Status: {item['decision']})"):
-                st.write(f"**Question:** {item['query']}")
-                st.write(f"**AI Decision:** {item['response']}") # Use item['response'] or parse from JSON entry
-                # If parsed to historical data structure
-                st.write(f"**Decision:** {item['decision']}")
-                st.write(f"**Justification:** {item['reason']}")
-    else:
-        st.info("Historical data is currently empty.")
+    for item in reversed(st.session_state.history):
+        with st.expander(f"🕒 {item['proc']} - {item['decision']}"):
+            st.write(f"**Justification:** {item['reason']}")
+            st.write(f"**Certainty:** {item['conf']}")
