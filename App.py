@@ -10,7 +10,7 @@ st.set_page_config(page_title="PolicyMind v2.0", layout="wide")
 
 API_KEY = st.secrets.get("GEMINI_API_KEY")
 genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+model = genai.GenerativeModel("gemini-1.5-pro")
 
 # ---------------------------
 # SESSION STATE
