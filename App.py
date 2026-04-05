@@ -1,106 +1,206 @@
 import streamlit as st
 import google.generativeai as genai
-from PyPDF2 import PdfReader
+import PyPDF2
+import re
 
-# -------------------------------
-# 🔑 CONFIG
-# -------------------------------
-st.set_page_config(page_title="PolicyMind AI", layout="wide")
+# ---------------------------
+# CONFIG
+# ---------------------------
+st.set_page_config(page_title="PolicyMind v2.0", layout="wide")
 
-# Load API key safely
-API_KEY = st.secrets.get("GEMINI_API_KEY", "")
-
-if not API_KEY:
-    st.error("❌ API Key missing! Add it in secrets.toml")
-    st.stop()
-
+API_KEY = st.secrets.get("GEMINI_API_KEY")
 genai.configure(api_key=API_KEY)
+model = genai.GenerativeModel("gemini-pro")
 
-# Initialize model
-model = genai.GenerativeModel("gemini-1.5-flash")
+# ---------------------------
+# SESSION STATE (HISTORY)
+# ---------------------------
+if "history" not in st.session_state:
+    st.session_state.history = []
 
-# -------------------------------
-# 📄 PDF TEXT EXTRACTION
-# -------------------------------
-def extract_text_from_pdf(pdf_file):
-    reader = PdfReader(pdf_file)
+# ---------------------------
+# EXTRACT TEXT FROM PDF
+# ---------------------------
+def extract_text(pdf_file):
+    reader = PyPDF2.PdfReader(pdf_file)
     text = ""
-
     for page in reader.pages:
         text += page.extract_text() or ""
+    return text[:8000]  # limit
 
-    return text
+# ---------------------------
+# EXTRACT STRUCTURED DATA
+# ---------------------------
+def extract_query_details(query):
+    age = re.search(r'(\d+)[- ]?year', query.lower())
+    months = re.search(r'(\d+)[- ]?(month|year|week)', query.lower())
+    
+    age_val = int(age.group(1)) if age else "Unknown"
 
+    if months:
+        val = int(months.group(1))
+        unit = months.group(2)
+        if "year" in unit:
+            months_val = val * 12
+        elif "week" in unit:
+            months_val = 1
+        else:
+            months_val = val
+    else:
+        months_val = "Unknown"
 
-# -------------------------------
-# 🤖 AI ANSWER FUNCTION
-# -------------------------------
+    procedure = "Unknown"
+    if "surgery" in query.lower():
+        procedure = "Surgery"
+    elif "dental" in query.lower():
+        procedure = "Dental"
+    elif "cosmetic" in query.lower():
+        procedure = "Cosmetic"
+    elif "appendectomy" in query.lower():
+        procedure = "Appendectomy"
+
+    return age_val, months_val, procedure
+
+# ---------------------------
+# GEMINI ANSWER
+# ---------------------------
 def generate_answer(query, context):
-    try:
-        prompt = f"""
-You are an Insurance Policy Assistant.
+    prompt = f"""
+You are an insurance claim AI.
 
-STRICT RULES:
-- Answer ONLY from given context
-- If answer not found → say "Not mentioned in policy"
-- Be precise and factual
-- Do NOT hallucinate
+Based ONLY on policy:
 
-CONTEXT:
 {context}
 
-QUESTION:
+User query:
 {query}
 
-ANSWER:
+Give SHORT answer:
+
+Decision: Approved or Rejected  
+Reason: One clear line  
+Confidence: percentage  
 """
 
+    try:
         response = model.generate_content(prompt)
-
-        if not response or not response.text:
-            return "⚠️ No response from model"
-
-        return response.text.strip()
-
+        return response.text if response else "No response"
     except Exception as e:
-        return f"❌ Error: {str(e)}"
+        return str(e)
 
+# ---------------------------
+# PARSE OUTPUT
+# ---------------------------
+def parse_output(text):
+    decision = "Unknown"
+    reason = ""
+    confidence = "80%"
 
-# -------------------------------
-# 🎨 UI
-# -------------------------------
-st.title("🧠 PolicyMind AI - Insurance Assistant")
+    for line in text.split("\n"):
+        if "Decision" in line:
+            decision = line.split(":")[-1].strip()
+        elif "Reason" in line:
+            reason = line.split(":")[-1].strip()
+        elif "Confidence" in line:
+            confidence = line.split(":")[-1].strip()
 
-uploaded_file = st.file_uploader("📄 Upload Insurance Policy PDF", type=["pdf"])
+    return decision, reason, confidence
 
-if uploaded_file:
-    with st.spinner("📄 Processing document..."):
-        context = extract_text_from_pdf(uploaded_file)
-        st.session_state["context"] = context
+# ---------------------------
+# UI HEADER
+# ---------------------------
+st.title("🧠 PolicyMind v2.0")
+st.caption("AI-Powered Insurance Policy Analysis Engine")
 
-    st.success("✅ Document indexed successfully")
+tabs = st.tabs(["🏠 Home", "📄 Query", "🧠 AI Response", "📊 Details", "🕘 History"])
 
-# -------------------------------
-# ❓ ASK QUESTION
-# -------------------------------
-query = st.text_input("💬 Ask your question")
+# ---------------------------
+# QUERY TAB
+# ---------------------------
+with tabs[1]:
+    st.subheader("Upload Policy Document")
+    pdf = st.file_uploader("Upload PDF", type=["pdf"])
 
-if st.button("🚀 Analyze with AI"):
+    if pdf:
+        context = extract_text(pdf)
+        st.success("Document indexed successfully ✅")
 
-    if "context" not in st.session_state:
-        st.warning("⚠️ Please upload a PDF first")
-    elif not query:
-        st.warning("⚠️ Please enter a question")
+        query = st.text_input("Ask your question")
+
+        if st.button("🚀 Analyze with AI"):
+            if query:
+                age, months, procedure = extract_query_details(query)
+                result = generate_answer(query, context)
+                decision, reason, confidence = parse_output(result)
+
+                # Save to history
+                st.session_state.history.append({
+                    "query": query,
+                    "decision": decision,
+                    "reason": reason
+                })
+
+                # Store for response tab
+                st.session_state.last_result = {
+                    "decision": decision,
+                    "reason": reason,
+                    "confidence": confidence,
+                    "months": months,
+                    "procedure": procedure
+                }
+
+                st.success("Analysis complete → Go to AI Response tab")
+
+# ---------------------------
+# AI RESPONSE TAB (LIKE VIDEO)
+# ---------------------------
+with tabs[2]:
+    st.subheader("🧠 AI Analysis Result")
+
+    if "last_result" in st.session_state:
+        r = st.session_state.last_result
+
+        # Gradient box
+        st.markdown(f"""
+        <div style="
+        background: linear-gradient(90deg, #4facfe, #00f2fe);
+        padding: 20px;
+        border-radius: 12px;
+        color: white;
+        font-size: 16px;">
+        💬 <b>{r['reason']}</b>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("### 📊 Analysis Summary")
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        col1.metric("Decision", r["decision"])
+        col2.metric("Confidence", r["confidence"])
+        col3.metric("Policy Age", f"{r['months']} months")
+        col4.metric("Procedure", r["procedure"])
+
+# ---------------------------
+# HISTORY TAB (FIXED)
+# ---------------------------
+with tabs[4]:
+    st.subheader("🕘 History")
+
+    if st.session_state.history:
+        for i, item in enumerate(reversed(st.session_state.history)):
+            st.markdown(f"""
+            **Query:** {item['query']}  
+            **Decision:** {item['decision']}  
+            **Reason:** {item['reason']}
+            ---
+            """)
     else:
-        with st.spinner("🤖 Thinking..."):
-            answer = generate_answer(query, st.session_state["context"])
+        st.info("No history yet")
 
-        st.subheader("📌 Answer")
-        st.write(answer)
-
-# -------------------------------
-# 🐞 DEBUG MODE (Optional)
-# -------------------------------
-with st.expander("🛠 Debug Info"):
-    st.write("API Key Loaded:", bool(API_KEY))
-    st.write("Context Loaded:", "context" in st.session_state)
+# ---------------------------
+# DETAILS TAB
+# ---------------------------
+with tabs[3]:
+    st.subheader("📊 Details")
+    st.write("Shows structured extraction (can extend later)")
