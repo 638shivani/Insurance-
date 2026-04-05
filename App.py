@@ -6,6 +6,41 @@ import re
 # ---------------- CONFIG & UI STYLING ----------------
 st.set_page_config(page_title="PolicyMind v2.1", layout="wide", page_icon="🧠")
 
+# ---------------- API & MODEL (FIXED FOR NONETYPE) ----------------
+API_KEY = st.secrets.get("GEMINI_API_KEY")
+
+if not API_KEY:
+    st.error("❌ GEMINI_API_KEY is missing from Streamlit Secrets.")
+    st.stop()
+
+genai.configure(api_key=API_KEY)
+
+@st.cache_resource
+def load_working_model():
+    """ 
+    Tries 4 different ways to connect to Gemini to prevent 'NoneType' errors.
+    """
+    # Try different model strings that work across different API versions
+    test_names = [
+        "gemini-1.5-flash", 
+        "models/gemini-1.5-flash", 
+        "gemini-pro", 
+        "models/gemini-pro"
+    ]
+    
+    for name in test_names:
+        try:
+            m = genai.GenerativeModel(name)
+            # Health check: if this fails, we move to the next name
+            m.generate_content("health check", generation_config={"max_output_tokens": 1})
+            return m
+        except:
+            continue
+    return None
+
+# Initialize the model
+model = load_working_model()
+
 # ---------------- LANGUAGES DICTIONARY ----------------
 LANG = {
     "English": {
@@ -25,8 +60,9 @@ LANG = {
         "appr": "Approved",
         "rej": "Rejected",
         "history_tab": "📜 History & Stats",
-        "decision": "Decision",
-        "reason": "Reason"
+        "ai_tab": "🧠 AI Response",
+        "no_pdf": "Please upload a PDF first!",
+        "no_query": "Please enter a question!"
     },
     "Hindi": {
         "title": "🧠 पॉलिसीमाइंड (PolicyMind) v2.1",
@@ -42,11 +78,12 @@ LANG = {
         "analyze_btn": "🚀 AI के साथ विश्लेषण करें",
         "stats_title": "📊 एनालिटिक्स डैशबोर्ड",
         "total_q": "कुल प्रश्न",
-        "appr": "स्वीकृत (Approved)",
-        "rej": "अस्वीकृत (Rejected)",
+        "appr": "स्वीकृत",
+        "rej": "अस्वीकृत",
         "history_tab": "📜 इतिहास और आंकड़े",
-        "decision": "निर्णय",
-        "reason": "कारण"
+        "ai_tab": "🧠 AI प्रतिक्रिया",
+        "no_pdf": "कृपया पहले PDF अपलोड करें!",
+        "no_query": "कृपया एक प्रश्न दर्ज करें!"
     },
     "Kannada": {
         "title": "🧠 ಪಾಲಿಸಿಮೈಂಡ್ (PolicyMind) v2.1",
@@ -62,41 +99,32 @@ LANG = {
         "analyze_btn": "🚀 AI ವಿಶ್ಲೇಷಣೆ",
         "stats_title": "📊 ಅನಾಲಿಟಿಕ್ಸ್ ಡ್ಯಾಶ್‌ಬೋರ್ಡ್",
         "total_q": "ಒಟ್ಟು ಪ್ರಶ್ನೆಗಳು",
-        "appr": "ಅನುಮೋದಿಸಲಾಗಿದೆ (Approved)",
-        "rej": "ತಿರಸ್ಕರಿಸಲಾಗಿದೆ (Rejected)",
+        "appr": "ಅನುಮೋದಿಸಲಾಗಿದೆ",
+        "rej": "ತಿರಸ್ಕರಿಸಲಾಗಿದೆ",
         "history_tab": "📜 ಇತಿಹಾಸ ಮತ್ತು ಅಂಕಿಅಂಶಗಳು",
-        "decision": "ತೀರ್ಮಾನ",
-        "reason": "ಕಾರಣ"
+        "ai_tab": "🧠 AI ಪ್ರತಿಕ್ರಿಯೆ",
+        "no_pdf": "ದಯವಿಟ್ಟು ಮೊದಲು PDF ಅಪ್‌ಲೋಡ್ ಮಾಡಿ!",
+        "no_query": "ದಯವಿಟ್ಟು ಪ್ರಶ್ನೆಯನ್ನು ನಮೂದಿಸಿ!"
     }
 }
 
-# ---------------- SIDEBAR: LANGUAGE ----------------
-selected_lang = st.sidebar.selectbox("🌐 Select Language / ಭಾಷೆಯನ್ನು ಆಯ್ಕೆಮಾಡಿ / भाषा चुनें", ["English", "Hindi", "Kannada"])
-T = LANG[selected_lang]
-
-# ---------------- API & MODEL ----------------
-API_KEY = st.secrets.get("GEMINI_API_KEY")
-if not API_KEY:
-    st.error("❌ Add GEMINI_API_KEY in Secrets")
-    st.stop()
-
-genai.configure(api_key=API_KEY)
-
-@st.cache_resource
-def load_working_model():
-    for name in ["gemini-1.5-flash", "gemini-1.5-pro"]:
-        try:
-            m = genai.GenerativeModel(name)
-            m.generate_content("test", generation_config={"max_output_tokens": 1})
-            return m
-        except: continue
-    return None
-
-model = load_working_model()
-
-# ---------------- SESSION ----------------
+# ---------------- SESSION STATE ----------------
 if "history" not in st.session_state: st.session_state.history = []
 if "pdf_text" not in st.session_state: st.session_state.pdf_text = ""
+if "latest" not in st.session_state: st.session_state.latest = None
+
+# ---------------- SIDEBAR ----------------
+st.sidebar.title("Settings")
+selected_lang = st.sidebar.selectbox("🌐 Select Language", ["English", "Hindi", "Kannada"])
+T = LANG[selected_lang]
+
+# Connection Status
+if model:
+    st.sidebar.success("✅ AI Connected")
+else:
+    st.sidebar.error("❌ AI Disconnected (NoneType)")
+    st.error("AI Model failed to load. Please check your API Key and refresh.")
+    st.stop()
 
 # ---------------- LOGIC ----------------
 def extract_pdf_text(file):
@@ -104,82 +132,84 @@ def extract_pdf_text(file):
     return "\n".join([p.extract_text() or "" for p in reader.pages])
 
 def generate_ai_response(query, context, lang):
+    # Prompt logic to handle language-specific decisions
     prompt = f"""
-    You are an Insurance Policy AI. 
-    Policy Content: {context[:12000]}
+    You are a Health Insurance Adjuster.
+    POLICY: {context[:12000]}
+    QUESTION: {query}
     
-    User Query: {query}
-    
-    Respond STRICTLY in {lang}. 
-    Format:
-    Decision: [Approved or Rejected]
-    Reason: [One short sentence]
+    Respond in {lang}. 
+    Your first word MUST be either 'Approved' or 'Rejected' (or the equivalent in {lang}).
+    Followed by 'Reason:' and a one-sentence explanation.
     """
     try:
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"Error: {e}"
+        return f"Error during AI generation: {e}"
 
-# ---------------- UI: HOME ----------------
+# ---------------- UI: HOME DASHBOARD ----------------
 st.title(T["title"])
 
-with st.expander(T["how_works"], expanded=True):
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write(T["step1"])
-        st.write(T["step2"])
-        st.write(T["step3"])
-    with col2:
-        st.info(f"**{T['examples']}**\n\n* {T['ex1']}\n* {T['ex2']}")
+with st.container():
+    st.markdown(f"### {T['how_works']}")
+    c1, c2, c3 = st.columns(3)
+    c1.info(f"**Step 1**\n{T['step1']}")
+    c2.info(f"**Step 2**\n{T['step2']}")
+    c3.info(f"**Step 3**\n{T['step3']}")
+
+with st.expander(T["examples"]):
+    st.write(f"1. {T['ex1']}")
+    st.write(f"2. {T['ex2']}")
+
+st.divider()
 
 # ---------------- MAIN TABS ----------------
-tab1, tab2, tab3 = st.tabs(["📄 " + T["upload_label"], "🧠 AI Response", T["history_tab"]])
+tab1, tab2, tab3 = st.tabs(["📄 " + T["upload_label"], T["ai_tab"], T["history_tab"]])
 
 with tab1:
     uploaded = st.file_uploader(T["upload_label"], type="pdf")
     if uploaded:
         st.session_state.pdf_text = extract_pdf_text(uploaded)
-        st.success("✅ Policy Loaded!")
+        st.success("✅ Policy Indexed")
 
     user_query = st.text_input(T["query_placeholder"])
 
     if st.button(T["analyze_btn"]):
         if not st.session_state.pdf_text:
-            st.error("Please upload a PDF first!")
+            st.error(T["no_pdf"])
         elif not user_query:
-            st.error("Please enter a question!")
+            st.error(T["no_query"])
         else:
-            with st.spinner("Analyzing..."):
+            with st.spinner("Analyzing policy..."):
                 raw_res = generate_ai_response(user_query, st.session_state.pdf_text, selected_lang)
                 
-                # Logic to determine approved/rejected from text for stats
-                decision_status = "Rejected"
-                if "Approved" in raw_res or "स्वीकृत" in raw_res or "ಅನುಮೋದಿಸಲಾಗಿದೆ" in raw_res:
-                    decision_status = "Approved"
+                # Check decision for stats
+                status = "Rejected"
+                # Check for approval keywords in all 3 languages
+                if any(word in raw_res for word in ["Approved", "स्वीकृत", "ಅನುಮೋದಿಸಲಾಗಿದೆ"]):
+                    status = "Approved"
 
-                # Save to history
                 entry = {
                     "query": user_query,
                     "response": raw_res,
-                    "decision": decision_status,
-                    "lang": selected_lang
+                    "decision": status
                 }
                 st.session_state.history.append(entry)
                 st.session_state.latest = entry
-                st.success("Analysis Complete! Check the 'AI Response' tab.")
+                st.toast("Analysis Complete!")
 
 with tab2:
-    if "latest" in st.session_state:
+    if st.session_state.latest:
         res = st.session_state.latest
         color = "#2ecc71" if res["decision"] == "Approved" else "#e74c3c"
         st.markdown(f"""
-        <div style="background:{color}; padding:25px; border-radius:15px; color:white; font-size:1.2em;">
-            {res['response']}
+        <div style="background:{color}; padding:30px; border-radius:15px; color:white; font-size:1.3em; box-shadow: 2px 2px 10px rgba(0,0,0,0.1);">
+            <b>{res['response']}</b>
         </div>
         """, unsafe_allow_html=True)
     else:
-        st.info("Results will appear here.")
+        st.info("Results will be shown here after you click 'Analyze'.")
 
 with tab3:
     st.subheader(T["stats_title"])
@@ -187,16 +217,16 @@ with tab3:
     approved = sum(1 for x in st.session_state.history if x['decision'] == "Approved")
     rejected = total - approved
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric(T["total_q"], total)
-    c2.metric(T["appr"], approved, delta_color="normal")
-    c3.metric(T["rej"], rejected, delta_color="inverse")
+    col1, col2, col3 = st.columns(3)
+    col1.metric(T["total_q"], total)
+    col2.metric(T["appr"], approved)
+    col3.metric(T["rej"], rejected)
 
     st.divider()
     if st.session_state.history:
         for item in reversed(st.session_state.history):
             with st.expander(f"🕒 {item['query'][:50]}... ({item['decision']})"):
-                st.write(f"**Query:** {item['query']}")
-                st.write(f"**Response:** {item['response']}")
+                st.write(f"**Question:** {item['query']}")
+                st.write(f"**AI Response:** {item['response']}")
     else:
-        st.info("No history found.")
+        st.info("History is empty.")
