@@ -15,11 +15,15 @@ if not API_KEY:
 
 genai.configure(api_key=API_KEY)
 
-# ---------------- MODEL ----------------
+# ---------------- MODEL AUTO DETECT ----------------
 def load_model():
     try:
-        # Explicitly use the correct model name
-        return genai.GenerativeModel("models/gemini-1.5-flash")
+        models = genai.list_models()
+        for m in models:
+            if "gemini" in m.name and "generateContent" in m.supported_generation_methods:
+                return genai.GenerativeModel(m.name)
+        # fallback if detection fails
+        return genai.GenerativeModel("models/gemini-1.5-pro")
     except Exception as e:
         st.error(f"Model load failed: {e}")
         return None
@@ -29,10 +33,8 @@ model = load_model()
 # ---------------- SESSION ----------------
 if "history" not in st.session_state:
     st.session_state.history = []
-
 if "latest" not in st.session_state:
     st.session_state.latest = None
-
 if "pdf_text" not in st.session_state:
     st.session_state.pdf_text = ""
 
@@ -97,7 +99,6 @@ Decision: Approved or Rejected
 Reason: one short line
 """
 
-        # Correct usage: pass list of strings, parse candidates
         response = model.generate_content([prompt])
         text = response.candidates[0].content.parts[0].text
 
@@ -134,7 +135,6 @@ with tabs[0]:
     query = st.text_input("Ask your question")
 
     if st.button("🚀 Analyze with AI"):
-
         if not st.session_state.pdf_text:
             st.error("Upload PDF first")
         elif not query:
@@ -177,7 +177,6 @@ with tabs[1]:
         col2.metric("Confidence", r["confidence"])
         col3.metric("Policy Age", r["policy_age"])
         col4.metric("Procedure", r["procedure"])
-
     else:
         st.info("No result yet")
 
