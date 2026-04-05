@@ -10,10 +10,26 @@ st.set_page_config(page_title="PolicyMind v2.0", layout="wide")
 API_KEY = st.secrets.get("GEMINI_API_KEY")
 
 if not API_KEY:
-    st.error("❌ Add GEMINI_API_KEY in Streamlit secrets")
+    st.error("❌ Add GEMINI_API_KEY in secrets")
     st.stop()
 
 genai.configure(api_key=API_KEY)
+
+# ---------------- MODEL AUTO DETECT ----------------
+def load_model():
+    try:
+        models = [m.name for m in genai.list_models()]
+
+        for name in models:
+            if "gemini" in name and "generateContent" in str(name):
+                return genai.GenerativeModel(name)
+
+        return genai.GenerativeModel(models[0])
+
+    except:
+        return None
+
+model = load_model()
 
 # ---------------- SESSION ----------------
 if "history" not in st.session_state:
@@ -22,7 +38,10 @@ if "history" not in st.session_state:
 if "latest" not in st.session_state:
     st.session_state.latest = None
 
-# ---------------- PDF EXTRACT ----------------
+if "pdf_text" not in st.session_state:
+    st.session_state.pdf_text = ""
+
+# ---------------- PDF ----------------
 def extract_pdf_text(file):
     reader = PyPDF2.PdfReader(file)
     text = ""
@@ -30,22 +49,25 @@ def extract_pdf_text(file):
         text += page.extract_text() or ""
     return text
 
-
-# ---------------- QUERY DETAILS ----------------
+# ---------------- QUERY PARSE ----------------
 def extract_details(query):
     age = re.search(r'(\d+)[- ]?year', query)
     months = re.search(r'(\d+)[- ]?month', query)
     weeks = re.search(r'(\d+)[- ]?week', query)
 
     procedure = "General"
-    if "surgery" in query.lower():
-        procedure = "Surgery"
-    if "dental" in query.lower():
+    q = query.lower()
+
+    if "dental" in q:
         procedure = "Dental"
-    if "cosmetic" in query.lower():
+    elif "cosmetic" in q:
         procedure = "Cosmetic"
-    if "appendectomy" in query.lower():
+    elif "appendectomy" in q:
         procedure = "Appendectomy"
+    elif "surgery" in q:
+        procedure = "Surgery"
+    elif "emergency" in q:
+        procedure = "Emergency"
 
     policy_months = 0
     if months:
@@ -59,31 +81,28 @@ def extract_details(query):
         "procedure": procedure
     }
 
-
-# ---------------- AI FUNCTION (STABLE) ----------------
+# ---------------- AI ANSWER ----------------
 def generate_answer(query, context):
     try:
-        import google.generativeai as genai
-
-        model = genai.GenerativeModel("gemini-1.5-latent")
+        if model is None:
+            return "Error", "Model not available"
 
         prompt = f"""
-You are an insurance AI.
+You are an insurance claim AI.
 
 Policy:
 {context[:3000]}
 
-User query:
+User Query:
 {query}
 
-Give STRICT short output:
+Give SHORT output only:
 
 Decision: Approved or Rejected
-Reason: one short line only
+Reason: one short line
 """
 
         response = model.generate_content(prompt)
-
         text = response.text
 
         decision = "Unknown"
@@ -102,7 +121,6 @@ Reason: one short line only
     except Exception as e:
         return "Error", str(e)
 
-
 # ---------------- UI ----------------
 st.title("🧠 PolicyMind v2.0")
 st.caption("AI-Powered Insurance Policy Analysis Engine")
@@ -115,26 +133,25 @@ with tabs[0]:
 
     if uploaded_file:
         st.session_state.pdf_text = extract_pdf_text(uploaded_file)
-        st.success("✅ Document uploaded")
+        st.success("✅ Document indexed successfully")
 
     query = st.text_input("Ask your question")
 
-    if st.button("🚀 Analyze"):
+    if st.button("🚀 Analyze with AI"):
 
-        if "pdf_text" not in st.session_state:
+        if not st.session_state.pdf_text:
             st.error("Upload PDF first")
         elif not query:
-            st.error("Enter a question")
+            st.error("Enter a query")
         else:
             details = extract_details(query)
-
             decision, reason = generate_answer(query, st.session_state.pdf_text)
 
             result = {
                 "query": query,
                 "decision": decision,
                 "reason": reason,
-                "confidence": "90%",
+                "confidence": "90%" if decision != "Error" else "0%",
                 "policy_age": f"{details['policy_months']} months",
                 "procedure": details["procedure"]
             }
@@ -142,16 +159,15 @@ with tabs[0]:
             st.session_state.latest = result
             st.session_state.history.append(result)
 
-# ---------------- RESPONSE ----------------
+# ---------------- AI RESPONSE ----------------
 with tabs[1]:
     if st.session_state.latest:
         r = st.session_state.latest
 
-        # Gradient style box
         st.markdown(f"""
         <div style="
         background: linear-gradient(90deg, #4facfe, #00f2fe);
-        padding: 20px;
+        padding: 18px;
         border-radius: 10px;
         color: white;">
         💬 <b>{r['reason']}</b>
@@ -167,7 +183,7 @@ with tabs[1]:
         col4.metric("Procedure", r["procedure"])
 
     else:
-        st.info("No analysis yet")
+        st.info("No result yet")
 
 # ---------------- DETAILS ----------------
 with tabs[2]:
