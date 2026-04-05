@@ -63,30 +63,28 @@ def extract_details(query):
 # ---------------- AI FUNCTION (STABLE) ----------------
 def generate_answer(query, context):
     try:
+        import google.generativeai as genai
+
+        model = genai.GenerativeModel("gemini-1.5-flash")
+
         prompt = f"""
-You are an insurance claim assistant.
+You are an insurance AI.
 
-Use ONLY the policy below:
-
+Policy:
 {context[:3000]}
 
-User question:
+User query:
 {query}
 
-Answer strictly:
+Give STRICT short output:
 
 Decision: Approved or Rejected
-Reason: one short line
+Reason: one short line only
 """
 
-        response = genai.generate_text(
-            model="models/text-bison-001",
-            prompt=prompt,
-            temperature=0.2,
-            max_output_tokens=150
-        )
+        response = model.generate_content(prompt)
 
-        text = response.result
+        text = response.text
 
         decision = "Unknown"
         reason = "Not found"
