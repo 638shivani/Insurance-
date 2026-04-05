@@ -65,7 +65,7 @@ def generate_answer(query, context):
     try:
         import google.generativeai as genai
 
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-1.5-latent")
 
         prompt = f"""
 You are an insurance AI.
