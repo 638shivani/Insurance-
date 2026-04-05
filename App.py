@@ -13,9 +13,12 @@ st.title("🧠 PolicyMind v2.0")
 st.caption("AI-Powered Insurance Policy Analysis Engine")
 
 # ---------------- API KEY ----------------
-API_KEY = st.secrets.get("GEMINI_API_KEY", "AIzaSyDr7lx6BhKJE0lxWJVfocSXlaUIokAZmSA")
+import streamlit as st
+import google.generativeai as genai
+
+API_KEY = st.secrets.get("GEMINI_API_KEY")
+
 genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel("gemini-pro")
 
 # ---------------- SESSION ----------------
 if "history" not in st.session_state:
