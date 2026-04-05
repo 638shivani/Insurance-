@@ -80,16 +80,16 @@ if not API_KEY:
 genai.configure(api_key=API_KEY)
 
 @st.cache_resource
+import streamlit as st
 import google.generativeai as genai
 import os
+
+st.set_page_config(page_title="PolicyMind Pro", layout="wide")
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 model = genai.GenerativeModel("gemini-1.5-flash")
-
-model = genai.GenerativeModel("gemini-1.5-flash")
 model_name = "gemini-1.5-flash"
-
 # ---------------- MULTILINGUAL DATA ----------------
 LANG_DB = {
     "English": {
