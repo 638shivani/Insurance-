@@ -13,95 +13,118 @@ genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel("gemini-pro")
 
 # ---------------------------
-# SESSION STATE (HISTORY)
+# SESSION STATE
 # ---------------------------
 if "history" not in st.session_state:
     st.session_state.history = []
 
+if "last_result" not in st.session_state:
+    st.session_state.last_result = None
+
 # ---------------------------
-# EXTRACT TEXT FROM PDF
+# PDF TEXT EXTRACTION
 # ---------------------------
 def extract_text(pdf_file):
     reader = PyPDF2.PdfReader(pdf_file)
     text = ""
     for page in reader.pages:
         text += page.extract_text() or ""
-    return text[:8000]  # limit
+    return text[:10000]
 
 # ---------------------------
-# EXTRACT STRUCTURED DATA
+# QUERY INFO EXTRACTION
 # ---------------------------
 def extract_query_details(query):
     age = re.search(r'(\d+)[- ]?year', query.lower())
-    months = re.search(r'(\d+)[- ]?(month|year|week)', query.lower())
-    
+    duration = re.search(r'(\d+)[- ]?(month|year|week)', query.lower())
+
     age_val = int(age.group(1)) if age else "Unknown"
 
-    if months:
-        val = int(months.group(1))
-        unit = months.group(2)
+    if duration:
+        val = int(duration.group(1))
+        unit = duration.group(2)
         if "year" in unit:
-            months_val = val * 12
+            months = val * 12
         elif "week" in unit:
-            months_val = 1
+            months = 1
         else:
-            months_val = val
+            months = val
     else:
-        months_val = "Unknown"
+        months = "Unknown"
 
-    procedure = "Unknown"
-    if "surgery" in query.lower():
-        procedure = "Surgery"
+    procedure = "General"
+    if "appendectomy" in query.lower():
+        procedure = "Appendectomy"
     elif "dental" in query.lower():
         procedure = "Dental"
     elif "cosmetic" in query.lower():
         procedure = "Cosmetic"
-    elif "appendectomy" in query.lower():
-        procedure = "Appendectomy"
+    elif "surgery" in query.lower():
+        procedure = "Surgery"
 
-    return age_val, months_val, procedure
+    return age_val, months, procedure
 
 # ---------------------------
-# GEMINI ANSWER
+# GEMINI AI
 # ---------------------------
 def generate_answer(query, context):
     prompt = f"""
-You are an insurance claim AI.
+You are an expert insurance claim AI.
 
-Based ONLY on policy:
+STRICT RULES:
+- Use ONLY given policy
+- Answer SHORT (1 line reason)
+- DO NOT explain long
+- FOLLOW FORMAT EXACTLY
 
+Policy:
 {context}
 
-User query:
+Query:
 {query}
 
-Give SHORT answer:
+FORMAT:
 
-Decision: Approved or Rejected  
-Reason: One clear line  
-Confidence: percentage  
+Decision: Approved OR Rejected
+Reason: one short line
+Confidence: number%
+
+If not found:
+
+Decision: Unknown
+Reason: Not found in policy
+Confidence: 50%
 """
 
     try:
         response = model.generate_content(prompt)
-        return response.text if response else "No response"
+
+        if response and hasattr(response, "text") and response.text.strip():
+            return response.text.strip()
+        else:
+            return "Decision: Unknown\nReason: No response\nConfidence: 50%"
+
     except Exception as e:
-        return str(e)
+        return f"Decision: Error\nReason: {str(e)}\nConfidence: 0%"
 
 # ---------------------------
 # PARSE OUTPUT
 # ---------------------------
 def parse_output(text):
     decision = "Unknown"
-    reason = ""
+    reason = "Not available"
     confidence = "80%"
 
     for line in text.split("\n"):
-        if "Decision" in line:
-            decision = line.split(":")[-1].strip()
-        elif "Reason" in line:
-            reason = line.split(":")[-1].strip()
-        elif "Confidence" in line:
+        line = line.strip().lower()
+
+        if line.startswith("decision"):
+            decision = line.split(":")[-1].strip().capitalize()
+
+        elif line.startswith("reason"):
+            reason = line.split(":")[-1].strip().capitalize()
+
+        elif line.startswith("confidence"):
             confidence = line.split(":")[-1].strip()
 
     return decision, reason, confidence
@@ -128,19 +151,20 @@ with tabs[1]:
         query = st.text_input("Ask your question")
 
         if st.button("🚀 Analyze with AI"):
-            if query:
+            if query.strip() != "":
                 age, months, procedure = extract_query_details(query)
+
                 result = generate_answer(query, context)
                 decision, reason, confidence = parse_output(result)
 
-                # Save to history
+                # SAVE HISTORY
                 st.session_state.history.append({
                     "query": query,
                     "decision": decision,
                     "reason": reason
                 })
 
-                # Store for response tab
+                # SAVE RESULT
                 st.session_state.last_result = {
                     "decision": decision,
                     "reason": reason,
@@ -149,26 +173,26 @@ with tabs[1]:
                     "procedure": procedure
                 }
 
-                st.success("Analysis complete → Go to AI Response tab")
+                st.success("✅ Analysis complete → Go to AI Response")
 
 # ---------------------------
-# AI RESPONSE TAB (LIKE VIDEO)
+# AI RESPONSE TAB
 # ---------------------------
 with tabs[2]:
     st.subheader("🧠 AI Analysis Result")
 
-    if "last_result" in st.session_state:
+    if st.session_state.last_result:
         r = st.session_state.last_result
 
         # Gradient box
         st.markdown(f"""
         <div style="
         background: linear-gradient(90deg, #4facfe, #00f2fe);
-        padding: 20px;
-        border-radius: 12px;
+        padding: 18px;
+        border-radius: 10px;
         color: white;
         font-size: 16px;">
-        💬 <b>{r['reason']}</b>
+        💬 <b>{r['reason'] if r['reason'] else "No explanation found"}</b>
         </div>
         """, unsafe_allow_html=True)
 
@@ -181,18 +205,21 @@ with tabs[2]:
         col3.metric("Policy Age", f"{r['months']} months")
         col4.metric("Procedure", r["procedure"])
 
+    else:
+        st.info("No analysis yet")
+
 # ---------------------------
-# HISTORY TAB (FIXED)
+# HISTORY TAB
 # ---------------------------
 with tabs[4]:
     st.subheader("🕘 History")
 
     if st.session_state.history:
-        for i, item in enumerate(reversed(st.session_state.history)):
+        for item in reversed(st.session_state.history):
             st.markdown(f"""
-            **Query:** {item['query']}  
-            **Decision:** {item['decision']}  
-            **Reason:** {item['reason']}
+            🔍 **Query:** {item['query']}  
+            ✅ **Decision:** {item['decision']}  
+            💡 **Reason:** {item['reason']}
             ---
             """)
     else:
@@ -203,4 +230,4 @@ with tabs[4]:
 # ---------------------------
 with tabs[3]:
     st.subheader("📊 Details")
-    st.write("Shows structured extraction (can extend later)")
+    st.write("Structured extraction shown here (can extend)")
