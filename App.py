@@ -69,7 +69,8 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ---------------- 2026 ROBUST MODEL LOADER ----------------
-API_KEY = st.secrets.get("GEMINI_API_KEY")
+import os
+API_KEY = os.getenv("GEMINI_API_KEY")
 if not API_KEY:
     st.error("❌ GEMINI_API_KEY Missing in Secrets")
     st.stop()
