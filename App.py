@@ -15,14 +15,10 @@ if not API_KEY:
 
 genai.configure(api_key=API_KEY)
 
-# ---------------- MODEL AUTO DETECT ----------------
+# ---------------- MODEL ----------------
 def load_model():
     try:
-        models = genai.list_models()
-        for m in models:
-            if "gemini" in m.name and "generateContent" in m.supported_generation_methods:
-                return genai.GenerativeModel(m.name)
-        # fallback if detection fails
+        # Explicitly use the correct model name
         return genai.GenerativeModel("models/gemini-1.5-flash")
     except Exception as e:
         st.error(f"Model load failed: {e}")
@@ -101,6 +97,7 @@ Decision: Approved or Rejected
 Reason: one short line
 """
 
+        # Correct usage: pass list of strings, parse candidates
         response = model.generate_content([prompt])
         text = response.candidates[0].content.parts[0].text
 
