@@ -1,179 +1,191 @@
 import streamlit as st
-import re
 
+# ------------------ PAGE CONFIG ------------------
 st.set_page_config(page_title="PolicyMind v2.0", layout="wide")
 
-# -----------------------------
-# 🎨 HEADER (KEEP SAME UI)
-# -----------------------------
+# ------------------ SESSION STATE ------------------
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+# ------------------ HEADER ------------------
 st.title("🧠 PolicyMind v2.0")
 st.caption("AI-Powered Insurance Policy Analysis Engine")
 
-tabs = st.tabs(["🏠 Home", "📄 Query", "🧠 AI Response", "📊 Details", "📜 History"])
+# ------------------ NAVIGATION ------------------
+tab = st.radio("", ["🏠 Home", "📄 Query", "🧠 AI Response", "📊 Details", "📜 History"], horizontal=True)
 
-# -----------------------------
-# 📄 QUERY TAB
-# -----------------------------
-with tabs[1]:
+# ------------------ HOME ------------------
+if tab == "🏠 Home":
+    st.subheader("Welcome to PolicyMind v2.0 🚀")
 
-    st.subheader("📄 Upload Policy Document")
+    st.markdown("""
+    ### What can PolicyMind do?
+
+    - ⚡ Instant Policy Analysis  
+    - 💬 Natural Language Queries  
+    - 📊 Detailed Decision Insights  
+    - 📜 Query History Tracking  
+
+    ### How to use:
+
+    1. Upload your policy PDF  
+    2. Ask questions like:
+        - "46-year-old male, knee surgery, 3-month policy"
+        - "Cosmetic surgery covered?"
+        - "Emergency appendectomy, 1-week policy"
+    """)
+
+# ------------------ QUERY TAB ------------------
+elif tab == "📄 Query":
+
+    st.subheader("📂 Upload Policy Document")
     uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
 
     if uploaded_file:
-        st.success("Document uploaded successfully ✅")
+        st.success("Document uploaded and indexed successfully ✅")
 
     st.subheader("💬 Ask Your Question")
-    user_query = st.text_input(
-        "Example: 46-year-old male, knee surgery in Pune, 3-month policy"
-    )
 
-    analyze = st.button("🚀 Analyze with AI")
+    query = st.text_input("Describe your situation:")
 
-# -----------------------------
-# 🔍 EXTRACT FUNCTION
-# -----------------------------
-def extract_details(query):
-    query = query.lower()
+    if st.button("🚀 Analyze with AI"):
 
-    # Age
-    age = None
-    age_match = re.search(r'(\d+)[-\s]?year', query)
-    if age_match:
-        age = int(age_match.group(1))
+        if query:
 
-    # Policy duration
-    months = 0
-    month_match = re.search(r'(\d+)[-\s]?month', query)
-    year_match = re.search(r'(\d+)[-\s]?year', query)
+            # ------------------ LOGIC ------------------
+            query_lower = query.lower()
 
-    if month_match:
-        months = int(month_match.group(1))
-    elif "policy" in query and year_match:
-        months = int(year_match.group(1)) * 12
+            # Extract age
+            age = None
+            if "year" in query_lower:
+                try:
+                    age = int(query_lower.split("-")[0])
+                except:
+                    age = None
 
-    # Procedure detection
-    if "cataract" in query:
-        procedure = "cataract"
-    elif "knee" in query:
-        procedure = "knee"
-    elif "cosmetic" in query:
-        procedure = "cosmetic"
-    elif "appendectomy" in query or "emergency" in query:
-        procedure = "emergency"
-    elif "dental" in query:
-        procedure = "dental"
-    elif "maternity" in query or "pregnancy" in query:
-        procedure = "maternity"
-    elif "diabetes" in query:
-        procedure = "preexisting"
-    else:
-        procedure = "general"
+            # Extract policy duration
+            if "week" in query_lower:
+                policy_months = 0.25
+            elif "month" in query_lower:
+                try:
+                    policy_months = int(query_lower.split("month")[0].split()[-1])
+                except:
+                    policy_months = 1
+            elif "year" in query_lower:
+                try:
+                    policy_months = int(query_lower.split("year")[0].split()[-1]) * 12
+                except:
+                    policy_months = 12
+            else:
+                policy_months = 1
 
-    return age, months, procedure
+            # Detect procedure
+            if "appendectomy" in query_lower:
+                procedure = "Emergency Appendectomy"
+                is_emergency = True
+            elif "cosmetic" in query_lower:
+                procedure = "Cosmetic Surgery"
+                is_emergency = False
+            elif "cataract" in query_lower:
+                procedure = "Cataract Surgery"
+                is_emergency = False
+            elif "dental" in query_lower:
+                procedure = "Dental Treatment"
+                is_emergency = False
+            else:
+                procedure = "General Treatment"
+                is_emergency = False
 
-# -----------------------------
-# 🧠 DECISION ENGINE (IMPROVED)
-# -----------------------------
-def make_decision(age, months, procedure):
+            # ------------------ DECISION ENGINE ------------------
+            if is_emergency:
+                decision = "Approved"
+                justification = "Emergency hospitalization is covered even during waiting period."
+                confidence = 98
 
-    # ❌ Cosmetic
-    if procedure == "cosmetic":
-        return "Rejected", "Not Applicable", "Cosmetic procedures are not covered", 95
+            elif "cosmetic" in query_lower:
+                decision = "Rejected"
+                justification = "Cosmetic procedures are excluded unless medically necessary."
+                confidence = 95
 
-    # ❌ Dental
-    if procedure == "dental":
-        return "Rejected", "Not Applicable", "Dental treatments excluded unless accident", 90
+            elif "dental" in query_lower:
+                decision = "Rejected"
+                justification = "Dental treatments are generally excluded unless due to accident."
+                confidence = 90
 
-    # ❌ Pre-existing
-    if procedure == "preexisting" and months < 24:
-        return "Rejected", "Not Applicable", "Pre-existing disease waiting period (24 months)", 95
+            elif policy_months < 12:
+                decision = "Rejected"
+                justification = "Waiting period not completed."
+                confidence = 88
 
-    # ❌ Knee surgery waiting
-    if procedure == "knee" and months < 12:
-        return "Rejected", "Not Applicable", "Waiting period not completed for knee surgery", 90
+            else:
+                decision = "Approved"
+                justification = "Covered under policy after waiting period."
+                confidence = 92
 
-    # ❌ Maternity waiting
-    if procedure == "maternity" and months < 24:
-        return "Rejected", "Not Applicable", "Maternity requires 24 months waiting period", 95
+            # ------------------ STORE RESULT ------------------
+            result = {
+                "query": query,
+                "decision": decision,
+                "confidence": confidence,
+                "policy_months": policy_months,
+                "procedure": procedure,
+                "justification": justification
+            }
 
-    # ✅ Cataract
-    if procedure == "cataract" and months >= 24:
-        return "Approved", "Up to Sum Insured", "Cataract covered after waiting period", 95
+            st.session_state.result = result
+            st.session_state.history.append(result)
 
-    # 🚑 Emergency
-    if procedure == "emergency":
-        return "Approved", "Up to Sum Insured", "Emergency hospitalization is covered", 100
+            st.success("Analysis Completed! Go to AI Response tab 👉")
 
-    # 👴 Age restriction
-    if age and age > 75:
-        return "Rejected", "Not Applicable", "Age exceeds policy entry limit", 85
-
-    # ⚠️ Partial logic for general cases
-    if months < 1:
-        return "Approved", "Up to Sum Insured", "Emergency/basic coverage allowed", 80
-
-    return "Approved", "Up to Sum Insured", "Covered under policy terms", 85
-
-# -----------------------------
-# 🧠 AI RESPONSE TAB
-# -----------------------------
-with tabs[2]:
+# ------------------ AI RESPONSE ------------------
+elif tab == "🧠 AI Response":
 
     st.subheader("🧠 AI Analysis Result")
 
-    if analyze and user_query:
+    if "result" in st.session_state:
 
-        age, months, procedure = extract_details(user_query)
-        decision, amount, reason, confidence = make_decision(age, months, procedure)
+        r = st.session_state.result
 
-        # Context box (same style)
-        st.success(
-            "💡 You are an Insurance AI.\n\n"
-            f"Context: Based on uploaded policy, analyzing query..."
-        )
+        st.success("💡 You are an Insurance AI")
 
-        st.subheader("📊 Analysis Summary")
+        st.markdown(f"""
+        ### ✅ Decision: **{r['decision']}**
+        ### 💰 Coverage: **Up to Sum Insured**
+        ### 📌 Procedure: **{r['procedure']}**
+        ### 📅 Policy Duration: **{r['policy_months']} months**
 
-        col1, col2, col3, col4 = st.columns(4)
+        ### 💡 Explanation:
+        {r['justification']}
 
-        col1.metric("Decision", decision)
-        col2.metric("Confidence", f"{confidence}%")
-        col3.metric("Policy Age", f"{months} months" if months else "Unknown")
-        col4.metric("Procedure", procedure.capitalize())
+        ### 📊 Confidence: **{r['confidence']}%**
 
-        st.markdown("---")
-
-        st.info(f"💬 Justification: {reason}")
+        ### 🚀 Next Steps:
+        - Proceed with hospital if approved
+        - Keep all medical documents ready
+        """)
 
     else:
-        st.warning("Please go to Query tab and enter your question.")
+        st.warning("No analysis yet. Go to Query tab.")
 
-# -----------------------------
-# 🏠 HOME TAB
-# -----------------------------
-with tabs[0]:
-    st.markdown("""
-    ### Welcome to PolicyMind v2.0 🎯
+# ------------------ DETAILS ------------------
+elif tab == "📊 Details":
 
-    ✔ Instant Policy Analysis  
-    ✔ Natural Language Queries  
-    ✔ Clear Decisions  
-    ✔ Smart Reasoning  
+    st.subheader("📊 Detailed JSON Output")
 
-    **How to use:**
-    1. Upload policy PDF  
-    2. Ask your question  
-    3. Get AI decision  
-    """)
+    if "result" in st.session_state:
+        st.json(st.session_state.result)
+    else:
+        st.warning("No data available.")
 
-# -----------------------------
-# 📊 DETAILS TAB
-# -----------------------------
-with tabs[3]:
-    st.write("Detailed explanation coming soon...")
+# ------------------ HISTORY ------------------
+elif tab == "📜 History":
 
-# -----------------------------
-# 📜 HISTORY TAB
-# -----------------------------
-with tabs[4]:
-    st.write("History feature coming soon...")
+    st.subheader("📜 Previous Queries")
+
+    if st.session_state.history:
+        for item in reversed(st.session_state.history):
+            st.write(f"🔹 {item['query']}")
+            st.write(f"   ➤ {item['decision']} ({item['confidence']}%)")
+            st.write("---")
+    else:
+        st.warning("No history yet.")
